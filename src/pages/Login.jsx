@@ -1,450 +1,829 @@
-import { useState } from 'react'
+import { useState } from "react";
 import {
-  User,
-  Phone,
-  Lock,
   Eye,
   EyeOff,
-  HeartPulse,
-  BriefcaseMedical,
+  Lock,
+  User,
+  Phone,
   ShieldCheck,
   Stethoscope,
-  Landmark
-} from 'lucide-react'
+  HeartPulse,
+  Building2,
+} from "lucide-react";
+
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+} from "firebase/auth";
+
+import {
+  doc,
+  getDoc,
+  setDoc,
+  serverTimestamp,
+} from "firebase/firestore";
+
+import { auth, db } from "../firebase";
+
 
 function Login({ onLogin }) {
-  const [mode, setMode] = useState('Login')
-  const [role, setRole] = useState('Patient')
-  const [name, setName] = useState('')
-  const [mobile, setMobile] = useState('')
-  const [password, setPassword] = useState('')
-  const [workerType, setWorkerType] = useState('Community Health Worker')
-  const [specialization, setSpecialization] = useState('General Medicine')
-  const [showPassword, setShowPassword] = useState(false)
+  const [mode, setMode] = useState("Login");
+  const [role, setRole] = useState("Patient");
 
-  const doctorSpecializations = [
-    'General Medicine', 'Cardiology', 'Dermatology', 'Pediatrics', 'Gynecology', 'Orthopedics', 'Emergency Medicine'
-  ]
+  const [name, setName] = useState("");
+  const [mobile, setMobile] = useState("");
+  const [password, setPassword] = useState("");
 
-  const workerTypes = [
-    'Community Health Worker',
-    'ASHA Worker',
-    'ANM',
-    'Nurse',
-    'Pharmacist',
-    'Lab Technician',
-    'Other'
-  ]
+  const [workerType, setWorkerType] = useState(
+    "Community Health Worker"
+  );
 
-  const passwordValid =
-    password.length >= 8 &&
-    /[A-Z]/.test(password) &&
-    /[a-z]/.test(password) &&
-    /[0-9]/.test(password) &&
-    /[^A-Za-z0-9]/.test(password)
+  const [specialization, setSpecialization] = useState(
+    "General Medicine"
+  );
 
-  const handleMobileChange = e => {
-    const value = e.target.value.replace(/\D/g, '').slice(0, 10)
-    setMobile(value)
-  }
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = e => {
-    e.preventDefault()
+  const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+
+
+  // --------------------------------------------------
+  // Password validation
+  // --------------------------------------------------
+
+  const validatePassword = (value) => {
+    if (value.length < 8) {
+      return "Password must be at least 8 characters.";
+    }
+
+    if (!/[A-Z]/.test(value)) {
+      return "Password must contain at least one uppercase letter.";
+    }
+
+    if (!/[a-z]/.test(value)) {
+      return "Password must contain at least one lowercase letter.";
+    }
+
+    if (!/[0-9]/.test(value)) {
+      return "Password must contain at least one number.";
+    }
+
+    if (!/[^A-Za-z0-9]/.test(value)) {
+      return "Password must contain at least one special character.";
+    }
+
+    return "";
+  };
+
+
+  // --------------------------------------------------
+  // Mobile number handler
+  // --------------------------------------------------
+
+  const handleMobileChange = (event) => {
+    const value = event.target.value
+      .replace(/\D/g, "")
+      .slice(0, 10);
+
+    setMobile(value);
+    setErrorMessage("");
+  };
+
+
+  // --------------------------------------------------
+  // Create a Firebase-friendly email
+  //
+  // The current UI uses mobile number instead of email.
+  // Firebase Email/Password authentication requires an
+  // email, so we create an internal email from the mobile.
+  // --------------------------------------------------
+
+  const createLoginEmail = (mobileNumber) => {
+    return `${mobileNumber}@caremitra.com`;
+  };
+
+
+  // --------------------------------------------------
+  // Save user information in localStorage
+  // --------------------------------------------------
+
+  const saveUserLocally = (userData) => {
+    localStorage.setItem(
+      "caremitraUser",
+      JSON.stringify(userData)
+    );
+  };
+
+
+  // --------------------------------------------------
+  // Login
+  // --------------------------------------------------
+
+  const handleLogin = async () => {
+    const loginEmail = createLoginEmail(mobile);
+
+    try {
+      const userCredential =
+        await signInWithEmailAndPassword(
+          auth,
+          loginEmail,
+          password
+        );
+
+      const firebaseUser = userCredential.user;
+
+      // Get the user's profile from Firestore
+      const userDocRef = doc(
+        db,
+        "users",
+        firebaseUser.uid
+      );
+
+      const userDoc = await getDoc(userDocRef);
+
+      if (!userDoc.exists()) {
+        setErrorMessage(
+          "User profile was not found. Please register this account first."
+        );
+        return;
+      }
+
+      const userData = {
+        uid: firebaseUser.uid,
+        ...userDoc.data(),
+      };
+
+      saveUserLocally(userData);
+
+      setSuccessMessage("Login successful!");
+
+      // Send the logged-in user to the main application
+      if (onLogin) {
+        onLogin(userData.role, userData);
+      }
+
+    } catch (error) {
+      console.error("Login error:", error);
+
+      let message =
+        "Login failed. Please check your details.";
+
+      if (
+        error.code === "auth/invalid-credential" ||
+        error.code === "auth/wrong-password" ||
+        error.code === "auth/user-not-found"
+      ) {
+        message =
+          "Invalid mobile number or password.";
+      } else if (
+        error.code === "auth/too-many-requests"
+      ) {
+        message =
+          "Too many login attempts. Please try again later.";
+      } else if (
+        error.code === "auth/network-request-failed"
+      ) {
+        message =
+          "Network error. Please check your internet connection.";
+      }
+
+      setErrorMessage(message);
+    }
+  };
+
+
+  // --------------------------------------------------
+  // Registration
+  // --------------------------------------------------
+
+  const handleRegister = async () => {
+    const passwordError = validatePassword(password);
+
+    if (passwordError) {
+      setErrorMessage(passwordError);
+      return;
+    }
 
     if (!name.trim()) {
-      alert('Please enter your name')
-      return
+      setErrorMessage("Please enter your full name.");
+      return;
     }
 
     if (mobile.length !== 10) {
-      alert('Phone number must contain exactly 10 digits')
-      return
+      setErrorMessage(
+        "Please enter a valid 10-digit mobile number."
+      );
+      return;
     }
 
-    if (!passwordValid) {
-      alert('Password must contain at least 8 characters, one uppercase letter, one lowercase letter, one number and one special character')
-      return
+    const loginEmail = createLoginEmail(mobile);
+
+    try {
+      // Create Firebase Authentication account
+      const userCredential =
+        await createUserWithEmailAndPassword(
+          auth,
+          loginEmail,
+          password
+        );
+
+      const firebaseUser = userCredential.user;
+
+      // Data stored in Firestore
+      const userData = {
+        uid: firebaseUser.uid,
+        name: name.trim(),
+        mobile: mobile,
+        email: loginEmail,
+        role: role,
+        workerType:
+          role === "Health Worker"
+            ? workerType
+            : "",
+        specialization:
+          role === "Doctor"
+            ? specialization
+            : "",
+        createdAt: serverTimestamp(),
+      };
+
+      // Create users/{uid} document
+      await setDoc(
+        doc(db, "users", firebaseUser.uid),
+        userData
+      );
+
+      // LocalStorage version
+      const localUserData = {
+        uid: firebaseUser.uid,
+        name: name.trim(),
+        mobile: mobile,
+        email: loginEmail,
+        role: role,
+        workerType:
+          role === "Health Worker"
+            ? workerType
+            : "",
+        specialization:
+          role === "Doctor"
+            ? specialization
+            : "",
+        createdAt: new Date().toISOString(),
+      };
+
+      saveUserLocally(localUserData);
+
+      setSuccessMessage(
+        "Account created successfully!"
+      );
+
+      // Log the user into the application
+      if (onLogin) {
+        onLogin(role, localUserData);
+      }
+
+    } catch (error) {
+      console.error("Registration error:", error);
+
+      let message =
+        "Registration failed. Please try again.";
+
+      if (error.code === "auth/email-already-in-use") {
+        message =
+          "An account already exists with this mobile number. Please login.";
+      } else if (
+        error.code === "auth/weak-password"
+      ) {
+        message =
+          "Password is too weak. Please use a stronger password.";
+      } else if (
+        error.code === "auth/network-request-failed"
+      ) {
+        message =
+          "Network error. Please check your internet connection.";
+      }
+
+      setErrorMessage(message);
+    }
+  };
+
+
+  // --------------------------------------------------
+  // Form submit
+  // --------------------------------------------------
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    if (!mobile || mobile.length !== 10) {
+      setErrorMessage(
+        "Please enter a valid 10-digit mobile number."
+      );
+      return;
     }
 
-    const userData = {
-      name: name.trim(),
-      mobile,
-      role,
-      workerType: role === 'Health Worker' ? workerType : '',
-      specialization: role === 'Doctor' ? specialization : ''
+    if (!password) {
+      setErrorMessage("Please enter your password.");
+      return;
     }
 
-    localStorage.setItem(
-      'caremitraUser',
-      JSON.stringify(userData)
-    )
+    setLoading(true);
 
-    onLogin(role, userData)
-  }
+    try {
+      if (mode === "Login") {
+        await handleLogin();
+      } else {
+        await handleRegister();
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+
+  // --------------------------------------------------
+  // Change between Login and Register
+  // --------------------------------------------------
+
+  const changeMode = (newMode) => {
+    setMode(newMode);
+
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    // Clear form fields when switching
+    setName("");
+    setMobile("");
+    setPassword("");
+  };
+
+
+  // --------------------------------------------------
+  // Role icon
+  // --------------------------------------------------
+
+  const getRoleIcon = (selectedRole) => {
+    if (selectedRole === "Patient") {
+      return <HeartPulse size={18} />;
+    }
+
+    if (selectedRole === "Health Worker") {
+      return <ShieldCheck size={18} />;
+    }
+
+    if (selectedRole === "Doctor") {
+      return <Stethoscope size={18} />;
+    }
+
+    if (selectedRole === "Government Admin") {
+      return <Building2 size={18} />;
+    }
+
+    return <User size={18} />;
+  };
+
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-sky-50 via-white to-emerald-50 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50 flex items-center justify-center px-4 py-8">
 
       <div className="w-full max-w-md">
 
-        <div className="bg-white rounded-3xl shadow-xl overflow-hidden">
+        {/* ------------------------------------------------ */}
+        {/* Logo / Header */}
+        {/* ------------------------------------------------ */}
 
-          <div className="bg-gradient-to-r from-sky-600 to-emerald-500 p-8 text-center">
+        <div className="text-center mb-8">
 
-            <div className="w-20 h-20 mx-auto bg-white/20 rounded-full flex items-center justify-center">
-              <HeartPulse
-                size={42}
-                className="text-white"
-              />
-            </div>
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-blue-600 text-white shadow-lg mb-4">
+            <HeartPulse size={34} />
+          </div>
 
-            <h1 className="text-3xl font-bold text-white mt-4">
-              CareMitra
-            </h1>
+          <h1 className="text-3xl font-bold text-gray-900">
+            CareMitra
+          </h1>
 
-            <p className="text-sky-50 text-sm mt-1">
-              Your Health • Our Priority
-            </p>
+          <p className="text-gray-600 mt-2">
+            Your healthcare companion
+          </p>
 
-            <p className="text-white/90 text-sm mt-3">
-              Healthcare Support
+        </div>
+
+
+        {/* ------------------------------------------------ */}
+        {/* Login Card */}
+        {/* ------------------------------------------------ */}
+
+        <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-6 sm:p-8">
+
+          {/* Mode tabs */}
+
+          <div className="flex bg-gray-100 rounded-xl p-1 mb-6">
+
+            <button
+              type="button"
+              onClick={() => changeMode("Login")}
+              className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition ${
+                mode === "Login"
+                  ? "bg-white text-blue-600 shadow-sm"
+                  : "text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              Login
+            </button>
+
+            <button
+              type="button"
+              onClick={() => changeMode("Register")}
+              className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition ${
+                mode === "Register"
+                  ? "bg-white text-blue-600 shadow-sm"
+                  : "text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              Register
+            </button>
+
+          </div>
+
+
+          {/* Heading */}
+
+          <div className="mb-6">
+
+            <h2 className="text-2xl font-bold text-gray-900">
+              {mode === "Login"
+                ? "Welcome back"
+                : "Create your account"}
+            </h2>
+
+            <p className="text-sm text-gray-500 mt-1">
+              {mode === "Login"
+                ? "Login to continue to CareMitra"
+                : "Create your CareMitra account"}
             </p>
 
           </div>
 
-          <div className="p-6 md:p-8">
 
-            <div className="flex bg-slate-100 rounded-xl p-1 mb-6">
+          {/* ------------------------------------------------ */}
+          {/* Role */}
+          {/* ------------------------------------------------ */}
 
-              <button
-                type="button"
-                onClick={() => setMode('Login')}
-                className={`flex-1 py-3 rounded-lg font-semibold ${
-                  mode === 'Login'
-                    ? 'bg-white text-sky-600 shadow'
-                    : 'text-slate-500'
-                }`}
-              >
-                Login
-              </button>
+          <div className="mb-5">
 
-              <button
-                type="button"
-                onClick={() => setMode('Register')}
-                className={`flex-1 py-3 rounded-lg font-semibold ${
-                  mode === 'Register'
-                    ? 'bg-white text-sky-600 shadow'
-                    : 'text-slate-500'
-                }`}
-              >
-                Register
-              </button>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Select Role
+            </label>
 
-            </div>
+            <div className="grid grid-cols-2 gap-2">
 
-            <h2 className="text-2xl font-bold text-slate-800 text-center">
-              {mode === 'Login'
-                ? 'Welcome Back'
-                : 'Create Your Account'}
-            </h2>
+              {[
+                "Patient",
+                "Health Worker",
+                "Doctor",
+                "Government Admin",
+              ].map((item) => (
 
-            <p className="text-slate-500 text-center text-sm mt-2 mb-6">
-              {mode === 'Login'
-                ? 'Sign in to continue to CareMitra'
-                : 'Create your CareMitra account'}
-            </p>
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => setRole(item)}
+                  className={`flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border text-sm font-medium transition ${
+                    role === item
+                      ? "border-blue-500 bg-blue-50 text-blue-600"
+                      : "border-gray-200 bg-white text-gray-600 hover:border-blue-300"
+                  }`}
+                >
+                  {getRoleIcon(item)}
+                  <span>{item}</span>
+                </button>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-6">
-
-              <button
-                type="button"
-                onClick={() => setRole('Patient')}
-                className={`p-3 rounded-2xl border-2 flex flex-col items-center gap-2 ${
-                  role === 'Patient'
-                    ? 'border-sky-500 bg-sky-50 text-sky-700'
-                    : 'border-slate-200 text-slate-500'
-                }`}
-              >
-                <HeartPulse size={25} />
-                <span className="font-semibold text-sm">Patient</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setRole('Health Worker')}
-                className={`p-3 rounded-2xl border-2 flex flex-col items-center gap-2 ${
-                  role === 'Health Worker'
-                    ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
-                    : 'border-slate-200 text-slate-500'
-                }`}
-              >
-                <BriefcaseMedical size={25} />
-                <span className="font-semibold text-sm">Health Worker</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setRole('Doctor')}
-                className={`p-3 rounded-2xl border-2 flex flex-col items-center gap-2 ${
-                  role === 'Doctor'
-                    ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
-                    : 'border-slate-200 text-slate-500'
-                }`}
-              >
-                <Stethoscope size={25} />
-                <span className="font-semibold text-sm">Doctor</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setRole('Government Admin')}
-                className={`p-3 rounded-2xl border-2 flex flex-col items-center gap-2 ${
-                  role === 'Government Admin'
-                    ? 'border-slate-700 bg-slate-100 text-slate-800'
-                    : 'border-slate-200 text-slate-500'
-                }`}
-              >
-                <Landmark size={25} />
-                <span className="font-semibold text-sm">Gov Admin</span>
-              </button>
+              ))}
 
             </div>
 
-            <form
-              onSubmit={handleSubmit}
-              className="space-y-4"
-            >
+          </div>
 
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-2">
+
+          <form onSubmit={handleSubmit}>
+
+            {/* ------------------------------------------------ */}
+            {/* Full Name */}
+            {/* ------------------------------------------------ */}
+
+            {mode === "Register" && (
+
+              <div className="mb-4">
+
+                <label className="block text-sm font-medium text-gray-700 mb-2">
                   Full Name
                 </label>
 
                 <div className="relative">
 
                   <User
-                    size={19}
-                    className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
+                    size={18}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
                   />
 
                   <input
                     type="text"
                     value={name}
-                    onChange={e => setName(e.target.value)}
+                    onChange={(event) => {
+                      setName(event.target.value);
+                      setErrorMessage("");
+                    }}
                     placeholder="Enter your full name"
-                    className="w-full border border-slate-200 rounded-xl pl-11 pr-4 py-3 outline-none focus:ring-2 focus:ring-sky-300"
+                    className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
 
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-2">
-                  Phone Number
-                </label>
-
-                <div className="relative">
-
-                  <Phone
-                    size={19}
-                    className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
-                  />
-
-                  <input
-                    type="tel"
-                    inputMode="numeric"
-                    value={mobile}
-                    onChange={handleMobileChange}
-                    placeholder="Enter 10 digit phone number"
-                    maxLength={10}
-                    className="w-full border border-slate-200 rounded-xl pl-11 pr-4 py-3 outline-none focus:ring-2 focus:ring-sky-300"
-                  />
-
-                </div>
-
-                <p className="text-xs text-slate-400 mt-1">
-                  {mobile.length}/10 digits
-                </p>
-              </div>
-
-              {role === 'Doctor' && (
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-2">
-                    Medical Specialization
-                  </label>
-                  <div className="relative">
-                    <Stethoscope size={19} className="absolute left-4 top-1/2 -translate-y-1/2 text-indigo-500" />
-                    <select
-                      value={specialization}
-                      onChange={e => setSpecialization(e.target.value)}
-                      className="w-full border border-slate-200 rounded-xl pl-11 pr-4 py-3 bg-white outline-none focus:ring-2 focus:ring-indigo-300"
-                    >
-                      {doctorSpecializations.map(item => <option key={item}>{item}</option>)}
-                    </select>
-                  </div>
-                </div>
-              )}
-
-              {role === 'Health Worker' && (
-                <div>
-
-                  <label className="block text-sm font-semibold text-slate-700 mb-2">
-                    Type of Health Worker
-                  </label>
-
-                  <div className="relative">
-
-                    <BriefcaseMedical
-                      size={19}
-                      className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
-                    />
-
-                    <select
-                      value={workerType}
-                      onChange={e => setWorkerType(e.target.value)}
-                      className="w-full border border-slate-200 rounded-xl pl-11 pr-4 py-3 bg-white outline-none focus:ring-2 focus:ring-emerald-300"
-                    >
-                      {workerTypes.map(type => (
-                        <option
-                          key={type}
-                          value={type}
-                        >
-                          {type}
-                        </option>
-                      ))}
-                    </select>
-
-                  </div>
-                </div>
-              )}
-
-              <div>
-
-                <label className="block text-sm font-semibold text-slate-700 mb-2">
-                  Password
-                </label>
-
-                <div className="relative">
-
-                  <Lock
-                    size={19}
-                    className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
-                  />
-
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    value={password}
-                    onChange={e => setPassword(e.target.value)}
-                    placeholder="Enter password"
-                    className="w-full border border-slate-200 rounded-xl pl-11 pr-12 py-3 outline-none focus:ring-2 focus:ring-sky-300"
-                  />
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setShowPassword(!showPassword)
-                    }
-                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400"
-                  >
-                    {showPassword ? (
-                      <EyeOff size={19} />
-                    ) : (
-                      <Eye size={19} />
-                    )}
-                  </button>
-
-                </div>
-
-                <div className="bg-slate-50 rounded-xl p-3 mt-2">
-
-                  <p className="text-xs font-semibold text-slate-600 mb-2">
-                    Password requirements
-                  </p>
-
-                  <div className="space-y-1 text-xs">
-
-                    <p className={
-                      password.length >= 8
-                        ? 'text-green-600'
-                        : 'text-slate-400'
-                    }>
-                      ✓ At least 8 characters
-                    </p>
-
-                    <p className={
-                      /[A-Z]/.test(password)
-                        ? 'text-green-600'
-                        : 'text-slate-400'
-                    }>
-                      ✓ One uppercase letter
-                    </p>
-
-                    <p className={
-                      /[a-z]/.test(password)
-                        ? 'text-green-600'
-                        : 'text-slate-400'
-                    }>
-                      ✓ One lowercase letter
-                    </p>
-
-                    <p className={
-                      /[0-9]/.test(password)
-                        ? 'text-green-600'
-                        : 'text-slate-400'
-                    }>
-                      ✓ One number
-                    </p>
-
-                    <p className={
-                      /[^A-Za-z0-9]/.test(password)
-                        ? 'text-green-600'
-                        : 'text-slate-400'
-                    }>
-                      ✓ One special character
-                    </p>
-
-                  </div>
                 </div>
 
               </div>
 
-              <button
-                type="submit"
-                className={`w-full text-white py-4 rounded-xl font-bold ${
-                  role === 'Patient'
-                    ? 'bg-sky-600 hover:bg-sky-700'
-                    : role === 'Doctor'
-                      ? 'bg-indigo-600 hover:bg-indigo-700'
-                      : 'bg-emerald-600 hover:bg-emerald-700'
-                }`}
-              >
-                {mode === 'Login'
-                  ? 'Login to CareMitra'
-                  : 'Create CareMitra Account'}
-              </button>
+            )}
 
-            </form>
 
-            <div className="flex items-center justify-center gap-2 text-xs text-slate-400 mt-6">
+            {/* ------------------------------------------------ */}
+            {/* Mobile Number */}
+            {/* ------------------------------------------------ */}
 
-              <ShieldCheck size={15} />
+            <div className="mb-4">
 
-              <span>
-                Your information is kept secure
-              </span>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Phone Number
+              </label>
+
+              <div className="relative">
+
+                <Phone
+                  size={18}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+                />
+
+                <input
+                  type="tel"
+                  inputMode="numeric"
+                  value={mobile}
+                  onChange={handleMobileChange}
+                  placeholder="Enter 10-digit mobile number"
+                  maxLength={10}
+                  className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+
+              </div>
+
+              <p className="text-xs text-gray-400 mt-1">
+                Enter your 10-digit mobile number
+              </p>
 
             </div>
 
+
+            {/* ------------------------------------------------ */}
+            {/* Health Worker Type */}
+            {/* ------------------------------------------------ */}
+
+            {mode === "Register" &&
+              role === "Health Worker" && (
+
+                <div className="mb-4">
+
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Health Worker Type
+                  </label>
+
+                  <select
+                    value={workerType}
+                    onChange={(event) =>
+                      setWorkerType(event.target.value)
+                    }
+                    className="w-full px-4 py-3 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                  >
+
+                    <option>
+                      Community Health Worker
+                    </option>
+
+                    <option>
+                      ASHA Worker
+                    </option>
+
+                    <option>
+                      ANM
+                    </option>
+
+                    <option>
+                      Field Health Worker
+                    </option>
+
+                  </select>
+
+                </div>
+
+              )}
+
+
+            {/* ------------------------------------------------ */}
+            {/* Doctor Specialization */}
+            {/* ------------------------------------------------ */}
+
+            {mode === "Register" &&
+              role === "Doctor" && (
+
+                <div className="mb-4">
+
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Specialization
+                  </label>
+
+                  <select
+                    value={specialization}
+                    onChange={(event) =>
+                      setSpecialization(event.target.value)
+                    }
+                    className="w-full px-4 py-3 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                  >
+
+                    <option>
+                      General Medicine
+                    </option>
+
+                    <option>
+                      Pediatrics
+                    </option>
+
+                    <option>
+                      Cardiology
+                    </option>
+
+                    <option>
+                      Dermatology
+                    </option>
+
+                    <option>
+                      Gynecology
+                    </option>
+
+                    <option>
+                      Orthopedics
+                    </option>
+
+                    <option>
+                      Emergency Medicine
+                    </option>
+
+                  </select>
+
+                </div>
+
+              )}
+
+
+            {/* ------------------------------------------------ */}
+            {/* Password */}
+            {/* ------------------------------------------------ */}
+
+            <div className="mb-5">
+
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Password
+              </label>
+
+              <div className="relative">
+
+                <Lock
+                  size={18}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+                />
+
+                <input
+                  type={
+                    showPassword
+                      ? "text"
+                      : "password"
+                  }
+                  value={password}
+                  onChange={(event) => {
+                    setPassword(event.target.value);
+                    setErrorMessage("");
+                  }}
+                  placeholder="Enter your password"
+                  className="w-full pl-10 pr-12 py-3 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setShowPassword(!showPassword)
+                  }
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  {showPassword ? (
+                    <EyeOff size={18} />
+                  ) : (
+                    <Eye size={18} />
+                  )}
+                </button>
+
+              </div>
+
+
+              {mode === "Register" && (
+
+                <p className="text-xs text-gray-400 mt-1">
+                  At least 8 characters with uppercase,
+                  lowercase, number and special character.
+                </p>
+
+              )}
+
+            </div>
+
+
+            {/* ------------------------------------------------ */}
+            {/* Error */}
+            {/* ------------------------------------------------ */}
+
+            {errorMessage && (
+
+              <div className="mb-4 rounded-xl bg-red-50 border border-red-200 px-4 py-3">
+
+                <p className="text-sm text-red-600">
+                  {errorMessage}
+                </p>
+
+              </div>
+
+            )}
+
+
+            {/* ------------------------------------------------ */}
+            {/* Success */}
+            {/* ------------------------------------------------ */}
+
+            {successMessage && (
+
+              <div className="mb-4 rounded-xl bg-green-50 border border-green-200 px-4 py-3">
+
+                <p className="text-sm text-green-600">
+                  {successMessage}
+                </p>
+
+              </div>
+
+            )}
+
+
+            {/* ------------------------------------------------ */}
+            {/* Submit */}
+            {/* ------------------------------------------------ */}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className={`w-full py-3.5 rounded-xl text-white font-semibold transition shadow-md ${
+                loading
+                  ? "bg-blue-400 cursor-not-allowed"
+                  : "bg-blue-600 hover:bg-blue-700"
+              }`}
+            >
+
+              {loading
+                ? "Please wait..."
+                : mode === "Login"
+                ? "Login to CareMitra"
+                : "Create CareMitra Account"}
+
+            </button>
+
+          </form>
+
+
+          {/* ------------------------------------------------ */}
+          {/* Footer */}
+          {/* ------------------------------------------------ */}
+
+          <div className="mt-6 text-center">
+
+            <p className="text-xs text-gray-400">
+              By continuing, you agree to use CareMitra
+              responsibly for healthcare assistance.
+            </p>
+
           </div>
+
         </div>
 
-        <p className="text-center text-xs text-slate-400 mt-5">
-          CareMitra • Healthcare Support
-        </p>
-
       </div>
+
     </div>
-  )
+  );
 }
 
-export default Login
+export default Login;
