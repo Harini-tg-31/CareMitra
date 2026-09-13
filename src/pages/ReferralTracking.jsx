@@ -11,53 +11,20 @@ import {
   ArrowRight,
   CalendarClock
 } from 'lucide-react'
+import {
+  collection,
+  getDocs,
+  doc,
+  updateDoc,
+  setDoc,
+  serverTimestamp
+} from 'firebase/firestore'
+import { db } from '../firebase'
 
 function ReferralTracking({ onBack, onTravel }) {
-  const defaultReferral = {
-    id: 'REF-2026-1045',
-    patientId: 'SC-2026-1048',
-    patientName: 'SevaCare Patient',
-    patientAge: 42,
-    patientVillage: 'Kanchipuram Village',
-    patientMobile: '+91 98765 43210',
-    hospital: 'Government District Hospital',
-    reason: 'Specialist medical review required',
-    priority: 'High',
-    transport: 'Government Ambulance',
-    status: 'Hospital Review',
-    date: '10 Sep 2026'
-  }
-
-  const [referral, setReferral] = useState(
-    defaultReferral
-  )
+  const [referral, setReferral] = useState(null)
   const [updated, setUpdated] = useState(false)
-
-  const loadReferral = () => {
-    const referrals = JSON.parse(
-      localStorage.getItem('sevacareReferrals') || '[]'
-    )
-
-    if (referrals.length > 0) {
-      const latest = referrals[0]
-
-      setReferral({
-        ...defaultReferral,
-        ...latest
-      })
-    }
-  }
-
-  useEffect(() => {
-    loadReferral()
-
-    const interval = setInterval(
-      loadReferral,
-      2000
-    )
-
-    return () => clearInterval(interval)
-  }, [])
+  const [loading, setLoading] = useState(false)
 
   const stages = [
     {
@@ -78,94 +45,195 @@ function ReferralTracking({ onBack, onTravel }) {
     }
   ]
 
-  const currentStage = stages.findIndex(
-    (stage) => stage.title === referral.status
-  )
+  const loadReferral = async () => {
+    setLoading(true)
 
-  const createFollowUp = () => {
-    const followUps = JSON.parse(
-      localStorage.getItem('sevacareFollowUps') || '[]'
-    )
-
-    const exists = followUps.some(
-      (item) =>
-        item.referralId === referral.id
-    )
-
-    if (exists) {
-      return
-    }
-
-    const followUp = {
-      id: `FOLLOW-${Date.now()}`,
-      patientId: referral.patientId,
-      patient: referral.patientName,
-      age: referral.patientAge,
-      village: referral.patientVillage,
-      mobile: referral.patientMobile,
-      type: 'Referral Follow-up',
-      title: 'Hospital Referral Follow-up',
-      description:
-        `Follow up after referral to ${referral.hospital}.`,
-      date: 'After hospital visit',
-      status: 'Pending',
-      referralId: referral.id,
-      hospital: referral.hospital,
-      priority: referral.priority || 'Normal',
-      createdAt: new Date().toLocaleString(
-        'en-IN'
+    try {
+      const snapshot = await getDocs(
+        collection(db, 'referrals')
       )
-    }
 
-    localStorage.setItem(
-      'sevacareFollowUps',
-      JSON.stringify([
-        followUp,
-        ...followUps
-      ])
-    )
+      if (snapshot.empty) {
+        setReferral(null)
+        return
+      }
+
+      const referrals = snapshot.docs.map(item => ({
+        ...item.data(),
+        firebaseId: item.id
+      }))
+
+      referrals.sort((a, b) => {
+        const timeA = a.createdAt?.toMillis
+          ? a.createdAt.toMillis()
+          : 0
+
+        const timeB = b.createdAt?.toMillis
+          ? b.createdAt.toMillis()
+          : 0
+
+        return timeB - timeA
+      })
+
+      setReferral(referrals[0])
+    } catch (error) {
+      console.error(
+        'Firebase referral loading error:',
+        error
+      )
+
+      alert(
+        'Unable to load referral from Firebase.\n\n' +
+        error.message
+      )
+    } finally {
+      setLoading(false)
+    }
   }
 
-  const updateReferralStatus = (
-    newStatus
-  ) => {
-    const referrals = JSON.parse(
-      localStorage.getItem('sevacareReferrals') || '[]'
+  useEffect(() => {
+    loadReferral()
+
+    const interval = setInterval(
+      loadReferral,
+      5000
     )
 
-    const updatedReferrals = referrals.map(
-      (item) =>
-        item.id === referral.id
-          ? {
-              ...item,
-              status: newStatus
-            }
-          : item
-    )
+    return () => clearInterval(interval)
+  }, [])
 
-    localStorage.setItem(
-      'sevacareReferrals',
-      JSON.stringify(updatedReferrals)
-    )
+  const currentStage = referral
+    ? stages.findIndex(
+        stage => stage.title === referral.status
+      )
+    : -1
 
-    setReferral({
-      ...referral,
-      status: newStatus
-    })
+  const createFollowUp = async () => {
+    if (!referral) return
 
-    setUpdated(true)
+    try {
+      const snapshot = await getDocs(
+        collection(db, 'followUps')
+      )
 
-    if (newStatus === 'Patient Reached') {
-      createFollowUp()
+      const exists = snapshot.docs.some(
+        item =>
+          item.data().referralId === referral.id
+      )
+
+      if (exists) {
+        return
+      }
+
+      const followUpId =
+        `FOLLOW-${Date.now()}`
+
+      const followUp = {
+        id: followUpId,
+
+        patientId: referral.patientId,
+
+        patientCustomId:
+          referral.patientCustomId || '',
+
+        patientUid:
+          referral.patientUid || '',
+
+        patient: referral.patientName,
+
+        age: referral.patientAge,
+
+        village: referral.patientVillage,
+
+        mobile: referral.patientMobile,
+
+        type: 'Referral Follow-up',
+
+        title: 'Hospital Referral Follow-up',
+
+        description:
+          `Follow up after referral to ${referral.hospital}.`,
+
+        date: 'After hospital visit',
+
+        status: 'Pending',
+
+        priority:
+          referral.priority || 'Normal',
+
+        referralId: referral.id,
+
+        hospital: referral.hospital,
+
+        createdAt: serverTimestamp()
+      }
+
+      await setDoc(
+        doc(db, 'followUps', followUpId),
+        followUp
+      )
+
+      console.log(
+        'Follow-up saved to Firebase'
+      )
+    } catch (error) {
+      console.error(
+        'Follow-up Firebase error:',
+        error
+      )
     }
+  }
 
-    setTimeout(() => {
-      setUpdated(false)
-    }, 2500)
+  const updateReferralStatus = async newStatus => {
+    if (!referral) return
+
+    try {
+      await updateDoc(
+        doc(
+          db,
+          'referrals',
+          referral.firebaseId || referral.id
+        ),
+        {
+          status: newStatus,
+          updatedAt: serverTimestamp()
+        }
+      )
+
+      const updatedReferral = {
+        ...referral,
+        status: newStatus
+      }
+
+      setReferral(updatedReferral)
+      setUpdated(true)
+
+      if (newStatus === 'Patient Reached') {
+        await createFollowUp()
+      }
+
+      setTimeout(() => {
+        setUpdated(false)
+      }, 2500)
+
+    } catch (error) {
+      console.error(
+        'Firebase status update error:',
+        error
+      )
+
+      alert(
+        'Failed to update referral status.\n\n' +
+        error.message
+      )
+    }
   }
 
   const simulateNextStage = () => {
-    if (currentStage < stages.length - 1) {
+    if (
+      currentStage >= 0 &&
+      currentStage < stages.length - 1
+    ) {
       updateReferralStatus(
         stages[currentStage + 1].title
       )
@@ -179,19 +247,81 @@ function ReferralTracking({ onBack, onTravel }) {
   }
 
   const contactHospital = () => {
+    if (!referral) return
+
     alert(
       `Calling ${referral.hospital}`
     )
   }
 
   const handleTravel = () => {
-    onTravel()
+    if (onTravel) {
+      onTravel()
+    }
+  }
+
+  if (!referral) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50">
+
+        <header className="bg-white border-b border-blue-100 shadow-sm">
+
+          <div className="max-w-6xl mx-auto px-6 py-4">
+
+            <button
+              onClick={onBack}
+              className="flex items-center gap-2 text-gray-600 hover:text-blue-600"
+            >
+              <ArrowLeft size={20} />
+              Back to Dashboard
+            </button>
+
+          </div>
+
+        </header>
+
+        <main className="max-w-4xl mx-auto px-6 py-20">
+
+          <div className="bg-white rounded-3xl shadow-sm border border-blue-100 p-10 text-center">
+
+            <FileText
+              size={55}
+              className="mx-auto text-blue-500"
+            />
+
+            <h1 className="text-2xl font-bold text-gray-800 mt-5">
+              No Referral Found
+            </h1>
+
+            <p className="text-gray-500 mt-2">
+              Create a referral first from the Health Worker dashboard.
+            </p>
+
+            <button
+              onClick={loadReferral}
+              disabled={loading}
+              className="mt-6 bg-blue-600 text-white px-6 py-3 rounded-xl font-semibold"
+            >
+              {loading
+                ? 'Loading...'
+                : 'Refresh'}
+            </button>
+
+          </div>
+
+        </main>
+
+      </div>
+    )
   }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50">
+
       <header className="bg-white border-b border-blue-100 shadow-sm">
+
         <div className="max-w-6xl mx-auto px-6 py-4">
+
           <button
             onClick={onBack}
             className="flex items-center gap-2 text-gray-600 hover:text-blue-600"
@@ -199,18 +329,25 @@ function ReferralTracking({ onBack, onTravel }) {
             <ArrowLeft size={20} />
             Back to Dashboard
           </button>
+
         </div>
+
       </header>
 
       <main className="max-w-6xl mx-auto px-6 py-8">
+
         <section className="bg-gradient-to-r from-blue-700 to-cyan-600 rounded-3xl p-8 text-white shadow-xl">
+
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-5">
+
             <div className="flex items-center gap-4">
+
               <div className="bg-white/20 p-4 rounded-2xl">
                 <FileText size={34} />
               </div>
 
               <div>
+
                 <h1 className="text-3xl font-bold">
                   Referral Tracking
                 </h1>
@@ -218,28 +355,41 @@ function ReferralTracking({ onBack, onTravel }) {
                 <p className="text-blue-100 mt-2">
                   Track every stage of your hospital referral.
                 </p>
+
               </div>
+
             </div>
 
             <button
               onClick={loadReferral}
+              disabled={loading}
               className="bg-white/20 px-5 py-3 rounded-xl font-semibold flex items-center gap-2"
             >
+
               <RefreshCw size={18} />
-              Refresh
+
+              {loading
+                ? 'Loading...'
+                : 'Refresh'}
+
             </button>
+
           </div>
+
         </section>
 
         {updated && (
-          <section className="bg-green-50 border border-green-200 rounded-2xl p-5 mt-6 animate-fade">
+          <section className="bg-green-50 border border-green-200 rounded-2xl p-5 mt-6">
+
             <div className="flex items-center gap-3">
+
               <CheckCircle
                 className="text-green-600"
                 size={24}
               />
 
               <div>
+
                 <p className="font-bold text-green-800">
                   Referral Status Updated
                 </p>
@@ -247,14 +397,20 @@ function ReferralTracking({ onBack, onTravel }) {
                 <p className="text-sm text-green-700">
                   Current stage: {referral.status}
                 </p>
+
               </div>
+
             </div>
+
           </section>
         )}
 
         <section className="bg-white rounded-3xl border border-blue-100 shadow-sm p-7 mt-7">
+
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-5">
+
             <div>
+
               <p className="text-sm text-gray-500">
                 Referral ID
               </p>
@@ -264,11 +420,13 @@ function ReferralTracking({ onBack, onTravel }) {
               </h2>
 
               <p className="text-gray-500 mt-1">
-                {referral.date}
+                {referral.date || 'Date not available'}
               </p>
+
             </div>
 
             <div className="bg-blue-50 px-5 py-3 rounded-xl">
+
               <p className="text-xs text-gray-500">
                 Current Status
               </p>
@@ -276,11 +434,15 @@ function ReferralTracking({ onBack, onTravel }) {
               <p className="font-bold text-blue-700 mt-1">
                 {referral.status}
               </p>
+
             </div>
+
           </div>
 
           <div className="grid md:grid-cols-2 gap-5 mt-7">
+
             <div className="bg-gray-50 rounded-2xl p-5">
+
               <p className="text-xs text-gray-500">
                 Patient
               </p>
@@ -290,11 +452,14 @@ function ReferralTracking({ onBack, onTravel }) {
               </p>
 
               <p className="text-sm text-gray-500 mt-1">
-                {referral.patientId}
+                {referral.patientCustomId ||
+                  referral.patientId}
               </p>
+
             </div>
 
             <div className="bg-gray-50 rounded-2xl p-5">
+
               <p className="text-xs text-gray-500">
                 Referred Facility
               </p>
@@ -306,9 +471,11 @@ function ReferralTracking({ onBack, onTravel }) {
               <p className="text-sm text-gray-500 mt-1">
                 {referral.reason}
               </p>
+
             </div>
 
             <div className="bg-gray-50 rounded-2xl p-5">
+
               <p className="text-xs text-gray-500">
                 Priority
               </p>
@@ -316,9 +483,11 @@ function ReferralTracking({ onBack, onTravel }) {
               <p className="font-bold text-orange-600 mt-1">
                 {referral.priority}
               </p>
+
             </div>
 
             <div className="bg-gray-50 rounded-2xl p-5">
+
               <p className="text-xs text-gray-500">
                 Transport
               </p>
@@ -326,11 +495,15 @@ function ReferralTracking({ onBack, onTravel }) {
               <p className="font-bold text-gray-800 mt-1">
                 {referral.transport}
               </p>
+
             </div>
+
           </div>
+
         </section>
 
         <section className="bg-white rounded-3xl border border-blue-100 shadow-sm p-7 mt-6">
+
           <h2 className="text-xl font-bold text-gray-800">
             Referral Journey
           </h2>
@@ -340,7 +513,9 @@ function ReferralTracking({ onBack, onTravel }) {
           </p>
 
           <div className="mt-8">
+
             {stages.map((stage, index) => {
+
               const completed =
                 index <= currentStage
 
@@ -352,8 +527,8 @@ function ReferralTracking({ onBack, onTravel }) {
                   key={stage.title}
                   className="relative flex gap-5"
                 >
-                  {index <
-                    stages.length - 1 && (
+
+                  {index < stages.length - 1 && (
                     <div
                       className={`absolute left-5 top-12 w-1 h-16 ${
                         index < currentStage
@@ -374,14 +549,17 @@ function ReferralTracking({ onBack, onTravel }) {
                         : ''
                     }`}
                   >
+
                     {completed ? (
                       <CheckCircle size={22} />
                     ) : (
                       <Clock size={20} />
                     )}
+
                   </div>
 
                   <div className="pb-10">
+
                     <h3
                       className={`font-bold ${
                         current
@@ -403,30 +581,41 @@ function ReferralTracking({ onBack, onTravel }) {
                         Current Stage
                       </span>
                     )}
+
                   </div>
+
                 </div>
               )
             })}
+
           </div>
 
           <div className="flex flex-wrap gap-3 mt-2">
-            {currentStage <
-              stages.length - 1 && (
+
+            {currentStage < stages.length - 1 && (
+
               <button
                 onClick={simulateNextStage}
                 className="bg-blue-600 text-white px-5 py-3 rounded-xl font-semibold flex items-center gap-2"
               >
+
                 Simulate Next Stage
                 <ArrowRight size={18} />
+
               </button>
+
             )}
 
-            {currentStage ===
-              stages.length - 1 && (
+            {currentStage === stages.length - 1 && (
+
               <div className="bg-green-100 text-green-700 px-5 py-3 rounded-xl font-semibold flex items-center gap-2">
+
                 <CheckCircle size={19} />
+
                 Referral Journey Completed
+
               </div>
+
             )}
 
             <button
@@ -435,26 +624,30 @@ function ReferralTracking({ onBack, onTravel }) {
             >
               Reset Demo
             </button>
+
           </div>
+
         </section>
 
-        {referral.status ===
-          'Patient Reached' && (
+        {referral.status === 'Patient Reached' && (
+
           <section className="bg-green-50 border border-green-200 rounded-3xl p-6 mt-6">
+
             <div className="flex items-start gap-4">
+
               <CalendarClock
                 className="text-green-600 mt-1"
                 size={26}
               />
 
               <div>
+
                 <h2 className="font-bold text-green-800">
                   Follow-up Added
                 </h2>
 
                 <p className="text-sm text-green-700 mt-2">
-                  A follow-up task has been automatically created.
-                  You can view it under My Follow-ups.
+                  A follow-up task has been automatically created in Firebase.
                 </p>
 
                 <button
@@ -463,16 +656,22 @@ function ReferralTracking({ onBack, onTravel }) {
                 >
                   View My Follow-ups
                 </button>
+
               </div>
+
             </div>
+
           </section>
+
         )}
 
         <section className="grid md:grid-cols-3 gap-5 mt-6">
+
           <button
             onClick={contactHospital}
             className="bg-white border border-blue-100 rounded-2xl p-6 text-left shadow-sm"
           >
+
             <Phone
               className="text-blue-600"
               size={26}
@@ -485,12 +684,14 @@ function ReferralTracking({ onBack, onTravel }) {
             <p className="text-sm text-gray-500 mt-1">
               Get referral assistance
             </p>
+
           </button>
 
           <button
             onClick={handleTravel}
             className="bg-white border border-blue-100 rounded-2xl p-6 text-left shadow-sm"
           >
+
             <MapPin
               className="text-green-600"
               size={26}
@@ -503,9 +704,11 @@ function ReferralTracking({ onBack, onTravel }) {
             <p className="text-sm text-gray-500 mt-1">
               Find the best route
             </p>
+
           </button>
 
           <div className="bg-white border border-blue-100 rounded-2xl p-6 shadow-sm">
+
             <Hospital
               className="text-purple-600"
               size={26}
@@ -518,15 +721,19 @@ function ReferralTracking({ onBack, onTravel }) {
             <p className="text-sm text-gray-500 mt-1">
               {referral.hospital}
             </p>
+
           </div>
+
         </section>
 
         <section className="bg-blue-50 border border-blue-100 rounded-3xl p-6 mt-6">
+
           <h2 className="font-bold text-blue-800">
-            Smart Referral Journey
+            Firebase Referral Journey
           </h2>
 
           <div className="flex flex-wrap items-center gap-2 mt-4 text-sm">
+
             <span className="bg-white px-4 py-2 rounded-lg font-semibold">
               Health Worker
             </span>
@@ -537,7 +744,7 @@ function ReferralTracking({ onBack, onTravel }) {
             />
 
             <span className="bg-white px-4 py-2 rounded-lg font-semibold">
-              Referral
+              Firebase
             </span>
 
             <ArrowRight
@@ -557,9 +764,13 @@ function ReferralTracking({ onBack, onTravel }) {
             <span className="bg-white px-4 py-2 rounded-lg font-semibold">
               Follow-up
             </span>
+
           </div>
+
         </section>
+
       </main>
+
     </div>
   )
 }
