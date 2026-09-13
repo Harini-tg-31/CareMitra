@@ -12,6 +12,15 @@ import {
   Save,
   ClipboardList
 } from 'lucide-react'
+import {
+  collection,
+  onSnapshot,
+  updateDoc,
+  doc,
+  addDoc,
+  serverTimestamp
+} from 'firebase/firestore'
+import { auth, db } from '../firebase'
 
 const defaultAppointments = [
   {
@@ -68,26 +77,27 @@ function HealthWorkerAppointments({ onBack }) {
   const [instructions, setInstructions] = useState('')
   const [followUpDate, setFollowUpDate] = useState('')
 
-  const loadAppointments = () => {
-    const savedAppointments = JSON.parse(
-      localStorage.getItem('sevacareAppointments') || '[]'
-    )
-
-    const all = [...savedAppointments, ...defaultAppointments]
-    const unique = all.filter(
-      (item, index, self) =>
-        index === self.findIndex(x => x.id === item.id)
-    )
-
-    setAppointments(unique)
-  }
-
+  // --------------------------------------------------
+  // LOAD APPOINTMENTS FROM FIRESTORE
+  // --------------------------------------------------
   useEffect(() => {
-    loadAppointments()
+    const unsubscribe = onSnapshot(
+      collection(db, 'appointments'),
+      snapshot => {
+        const firestoreAppointments = snapshot.docs.map(item => ({
+          id: item.id,
+          ...item.data()
+        }))
 
-    const interval = setInterval(loadAppointments, 2000)
+        setAppointments(firestoreAppointments)
+      },
+      error => {
+        console.error('Error loading appointments:', error)
+        alert('Unable to load appointments from Firebase.')
+      }
+    )
 
-    return () => clearInterval(interval)
+    return () => unsubscribe()
   }, [])
 
   const priorityClass = priority => {
@@ -96,18 +106,13 @@ function HealthWorkerAppointments({ onBack }) {
     return 'bg-green-100 text-green-700'
   }
 
-  const startConsultation = appointment => {
+  // --------------------------------------------------
+  // START CONSULTATION
+  // --------------------------------------------------
+  const startConsultation = async appointment => {
     setSelected(appointment)
     setConsulting(true)
     setSaved(false)
-
-    const triageRecords = JSON.parse(
-      localStorage.getItem('sevacareTriageRecords') || '[]'
-    )
-
-    const triage = triageRecords
-      .filter(item => item.patientId === appointment.patientId)
-      .sort((a, b) => b.createdAt?.localeCompare(a.createdAt || '') || 0)[0]
 
     setCondition('')
     setMedicine('')
@@ -115,152 +120,164 @@ function HealthWorkerAppointments({ onBack }) {
     setInstructions('')
     setFollowUpDate('')
 
-    const updated = appointments.map(item =>
-      item.id === appointment.id
-        ? { ...item, status: 'In Consultation' }
-        : item
-    )
+    try {
+      await updateDoc(
+        doc(db, 'appointments', appointment.id),
+        {
+          status: 'In Consultation',
+          consultationStartedAt: serverTimestamp(),
+          consultationStartedBy: auth.currentUser?.uid || null
+        }
+      )
 
-    setAppointments(updated)
-
-    const savedAppointments = JSON.parse(
-      localStorage.getItem('sevacareAppointments') || '[]'
-    )
-
-    const updatedSaved = savedAppointments.map(item =>
-      item.id === appointment.id
-        ? { ...item, status: 'In Consultation' }
-        : item
-    )
-
-    if (triage) {
-      setCondition(triage.recommendation || '')
+      setSelected({
+        ...appointment,
+        status: 'In Consultation'
+      })
+    } catch (error) {
+      console.error('Error starting consultation:', error)
+      alert('Could not update appointment status.')
     }
-
-    localStorage.setItem(
-      'sevacareAppointments',
-      JSON.stringify(updatedSaved)
-    )
   }
 
-  const saveConsultation = () => {
+  // --------------------------------------------------
+  // SAVE CONSULTATION
+  // --------------------------------------------------
+  const saveConsultation = async () => {
     if (!condition || !medicine || !dosage) {
       alert('Please enter condition, medicine and dosage')
       return
     }
 
-    const recordId = `REC-${Date.now()}`
-    const followId = `FOLLOW-${Date.now()}`
-
-    const record = {
-      id: recordId,
-      patientId: selected.patientId,
-      patient: selected.patient,
-      age: selected.age,
-      village: selected.village,
-      mobile: selected.mobile,
-      date: new Date().toLocaleDateString('en-IN'),
-      hospital: selected.hospital,
-      doctor: selected.doctor,
-      condition,
-      medicine,
-      dosage,
-      instructions: instructions || 'Follow doctor instructions.',
-      type: 'Doctor Consultation',
-      source: 'Health Worker Consultation',
-      appointmentId: selected.id,
-      createdAt: new Date().toLocaleString('en-IN')
+    if (!selected) {
+      alert('No appointment selected.')
+      return
     }
 
-    const records = JSON.parse(
-      localStorage.getItem('sevacareMedicalRecords') || '[]'
-    )
+    try {
+      const currentUser = auth.currentUser
 
-    records.unshift(record)
+      if (!currentUser) {
+        alert('Please login again.')
+        return
+      }
 
-    localStorage.setItem(
-      'sevacareMedicalRecords',
-      JSON.stringify(records)
-    )
+      const recordId = `REC-${Date.now()}`
+      const followId = `FOLLOW-${Date.now()}`
+      const medicineId = `RX-${recordId}`
 
-    const followUps = JSON.parse(
-      localStorage.getItem('sevacareFollowUps') || '[]'
-    )
+      // -----------------------------------------------
+      // MEDICAL RECORD
+      // -----------------------------------------------
+      const record = {
+        recordId,
+        patientId: selected.patientId || selected.patientId,
+        patient: selected.patient || '',
+        age: selected.age || '',
+        village: selected.village || '',
+        mobile: selected.mobile || '',
+        date: new Date().toLocaleDateString('en-IN'),
+        hospital: selected.hospital || '',
+        doctor: selected.doctor || '',
+        condition,
+        medicine,
+        dosage,
+        instructions:
+          instructions || 'Follow doctor instructions.',
+        type: 'Doctor Consultation',
+        source: 'Health Worker Consultation',
+        appointmentId: selected.id,
+        createdAt: serverTimestamp(),
+        createdBy: currentUser.uid
+      }
 
-    followUps.unshift({
-      id: followId,
-      patientId: selected.patientId,
-      patient: selected.patient,
-      age: selected.age,
-      village: selected.village,
-      mobile: selected.mobile,
-      type: 'Medication Follow-up',
-      title: 'Prescription Follow-up',
-      description: `Follow up regarding ${medicine} prescribed for ${condition}.`,
-      date: followUpDate || 'After consultation',
-      status: 'Pending',
-      priority: selected.priority || 'Normal',
-      hospital: selected.hospital,
-      doctor: selected.doctor,
-      appointmentId: selected.id,
-      recordId,
-      createdAt: new Date().toLocaleString('en-IN')
-    })
-
-    localStorage.setItem(
-      'sevacareFollowUps',
-      JSON.stringify(followUps)
-    )
-
-    const appointmentsData = JSON.parse(
-      localStorage.getItem('sevacareAppointments') || '[]'
-    )
-
-    const updatedAppointments = appointmentsData.map(item =>
-      item.id === selected.id
-        ? {
-            ...item,
-            status: 'Completed',
-            consultationCompleted: true,
-            recordId
-          }
-        : item
-    )
-
-    localStorage.setItem(
-      'sevacareAppointments',
-      JSON.stringify(updatedAppointments)
-    )
-
-    const statusMap = JSON.parse(
-      localStorage.getItem('sevacareMedicineStatus') || '{}'
-    )
-
-    const medicineId = `RX-${recordId}`
-
-    statusMap[medicineId] = false
-
-    localStorage.setItem(
-      'sevacareMedicineStatus',
-      JSON.stringify(statusMap)
-    )
-
-    setAppointments(prev =>
-      prev.map(item =>
-        item.id === selected.id
-          ? {
-              ...item,
-              status: 'Completed',
-              consultationCompleted: true,
-              recordId
-            }
-          : item
+      await addDoc(
+        collection(db, 'patients', selected.patientId, 'medicalRecords'),
+        record
       )
-    )
 
-    setSaved(true)
+      // -----------------------------------------------
+      // FOLLOW-UP
+      // -----------------------------------------------
+      const followUp = {
+        followUpId: followId,
+        patientId: selected.patientId,
+        patient: selected.patient || '',
+        age: selected.age || '',
+        village: selected.village || '',
+        mobile: selected.mobile || '',
+        type: 'Medication Follow-up',
+        title: 'Prescription Follow-up',
+        description: `Follow up regarding ${medicine} prescribed for ${condition}.`,
+        date: followUpDate || 'After consultation',
+        status: 'Pending',
+        priority: selected.priority || 'Normal',
+        hospital: selected.hospital || '',
+        doctor: selected.doctor || '',
+        appointmentId: selected.id,
+        recordId,
+        createdAt: serverTimestamp(),
+        createdBy: currentUser.uid
+      }
+
+      await addDoc(
+        collection(db, 'followUps'),
+        followUp
+      )
+
+      // -----------------------------------------------
+      // UPDATE APPOINTMENT
+      // -----------------------------------------------
+      await updateDoc(
+        doc(db, 'appointments', selected.id),
+        {
+          status: 'Completed',
+          consultationCompleted: true,
+          recordId,
+          completedAt: serverTimestamp(),
+          completedBy: currentUser.uid,
+          condition,
+          medicine,
+          dosage,
+          instructions:
+            instructions || 'Follow doctor instructions.',
+          followUpDate: followUpDate || null
+        }
+      )
+
+      // -----------------------------------------------
+      // UPDATE LOCAL MEDICINE STATUS
+      // -----------------------------------------------
+      const statusMap = JSON.parse(
+        localStorage.getItem('sevacareMedicineStatus') || '{}'
+      )
+
+      statusMap[medicineId] = false
+
+      localStorage.setItem(
+        'sevacareMedicineStatus',
+        JSON.stringify(statusMap)
+      )
+
+      setSaved(true)
+
+      setSelected(prev => ({
+        ...prev,
+        status: 'Completed',
+        consultationCompleted: true,
+        recordId
+      }))
+    } catch (error) {
+      console.error('Error saving consultation:', error)
+      alert(
+        `Could not save consultation: ${error.message}`
+      )
+    }
   }
 
+  // --------------------------------------------------
+  // CONSULTATION SCREEN
+  // --------------------------------------------------
   if (consulting && selected) {
     return (
       <div className="min-h-screen bg-sky-50 p-4 md:p-8">
@@ -280,12 +297,17 @@ function HealthWorkerAppointments({ onBack }) {
               <div>
                 <div className="flex items-center gap-3">
                   <div className="bg-sky-100 p-3 rounded-2xl">
-                    <Stethoscope className="text-sky-600" size={28} />
+                    <Stethoscope
+                      className="text-sky-600"
+                      size={28}
+                    />
                   </div>
+
                   <div>
                     <h1 className="text-2xl font-bold text-slate-800">
                       Doctor Consultation
                     </h1>
+
                     <p className="text-slate-500">
                       Enter consultation and prescription details
                     </p>
@@ -294,46 +316,75 @@ function HealthWorkerAppointments({ onBack }) {
               </div>
 
               <span className="bg-blue-100 text-blue-700 px-4 py-2 rounded-full font-semibold">
-                {selected.id}
+                {selected.bookingId || selected.id}
               </span>
             </div>
 
             <div className="bg-sky-50 rounded-2xl p-5 mt-6">
               <div className="flex items-center gap-3 mb-4">
                 <User className="text-sky-600" />
+
                 <h2 className="font-bold text-lg text-slate-800">
                   Patient Details
                 </h2>
               </div>
 
               <div className="grid md:grid-cols-4 gap-4">
+
                 <div>
-                  <p className="text-xs text-slate-500">Patient</p>
-                  <p className="font-semibold">{selected.patient}</p>
+                  <p className="text-xs text-slate-500">
+                    Patient
+                  </p>
+
+                  <p className="font-semibold">
+                    {selected.patient ||
+                      selected.patientName ||
+                      'Patient'}
+                  </p>
                 </div>
 
                 <div>
-                  <p className="text-xs text-slate-500">Patient ID</p>
-                  <p className="font-semibold">{selected.patientId}</p>
+                  <p className="text-xs text-slate-500">
+                    Patient ID
+                  </p>
+
+                  <p className="font-semibold">
+                    {selected.patientId}
+                  </p>
                 </div>
 
                 <div>
-                  <p className="text-xs text-slate-500">Age</p>
-                  <p className="font-semibold">{selected.age} years</p>
+                  <p className="text-xs text-slate-500">
+                    Age
+                  </p>
+
+                  <p className="font-semibold">
+                    {selected.age
+                      ? `${selected.age} years`
+                      : 'Not available'}
+                  </p>
                 </div>
 
                 <div>
-                  <p className="text-xs text-slate-500">Village</p>
-                  <p className="font-semibold">{selected.village}</p>
+                  <p className="text-xs text-slate-500">
+                    Village
+                  </p>
+
+                  <p className="font-semibold">
+                    {selected.village || 'Not available'}
+                  </p>
                 </div>
+
               </div>
             </div>
 
             <div className="grid md:grid-cols-2 gap-6 mt-6">
 
               <div className="border rounded-2xl p-5">
+
                 <div className="flex items-center gap-2 mb-4">
                   <Activity className="text-red-500" />
+
                   <h2 className="font-bold text-lg">
                     Clinical Information
                   </h2>
@@ -347,7 +398,8 @@ function HealthWorkerAppointments({ onBack }) {
                   <div className="bg-slate-50 rounded-xl p-4">
                     {selected.symptoms?.length
                       ? selected.symptoms.join(', ')
-                      : selected.reason || 'No symptoms recorded'}
+                      : selected.reason ||
+                        'No symptoms recorded'}
                   </div>
                 </div>
 
@@ -358,16 +410,21 @@ function HealthWorkerAppointments({ onBack }) {
 
                   <input
                     value={condition}
-                    onChange={e => setCondition(e.target.value)}
+                    onChange={e =>
+                      setCondition(e.target.value)
+                    }
                     placeholder="Enter diagnosis or condition"
                     className="w-full border rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-sky-300"
                   />
                 </div>
+
               </div>
 
               <div className="border rounded-2xl p-5">
+
                 <div className="flex items-center gap-2 mb-4">
                   <Pill className="text-green-600" />
+
                   <h2 className="font-bold text-lg">
                     Prescription
                   </h2>
@@ -380,7 +437,9 @@ function HealthWorkerAppointments({ onBack }) {
 
                   <input
                     value={medicine}
-                    onChange={e => setMedicine(e.target.value)}
+                    onChange={e =>
+                      setMedicine(e.target.value)
+                    }
                     placeholder="Example: Paracetamol 500mg"
                     className="w-full border rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-green-300"
                   />
@@ -393,7 +452,9 @@ function HealthWorkerAppointments({ onBack }) {
 
                   <input
                     value={dosage}
-                    onChange={e => setDosage(e.target.value)}
+                    onChange={e =>
+                      setDosage(e.target.value)
+                    }
                     placeholder="Example: 1 tablet twice daily"
                     className="w-full border rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-green-300"
                   />
@@ -406,19 +467,24 @@ function HealthWorkerAppointments({ onBack }) {
 
                   <textarea
                     value={instructions}
-                    onChange={e => setInstructions(e.target.value)}
+                    onChange={e =>
+                      setInstructions(e.target.value)
+                    }
                     placeholder="Example: Take after food"
                     rows="3"
                     className="w-full border rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-green-300 resize-none"
                   />
                 </div>
+
               </div>
 
             </div>
 
             <div className="border rounded-2xl p-5 mt-6">
+
               <div className="flex items-center gap-2 mb-4">
                 <CalendarClock className="text-purple-600" />
+
                 <h2 className="font-bold text-lg">
                   Follow-up
                 </h2>
@@ -431,9 +497,12 @@ function HealthWorkerAppointments({ onBack }) {
               <input
                 type="date"
                 value={followUpDate}
-                onChange={e => setFollowUpDate(e.target.value)}
+                onChange={e =>
+                  setFollowUpDate(e.target.value)
+                }
                 className="border rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-purple-300"
               />
+
             </div>
 
             {!saved ? (
@@ -446,6 +515,7 @@ function HealthWorkerAppointments({ onBack }) {
               </button>
             ) : (
               <div className="mt-6 bg-green-50 border border-green-200 rounded-2xl p-6 text-center">
+
                 <CheckCircle
                   className="text-green-600 mx-auto mb-3"
                   size={42}
@@ -460,11 +530,14 @@ function HealthWorkerAppointments({ onBack }) {
                 </p>
 
                 <div className="grid md:grid-cols-3 gap-3 mt-5">
+
                   <div className="bg-white rounded-xl p-4">
                     <FileText className="mx-auto text-sky-600 mb-2" />
+
                     <p className="font-semibold">
                       Medical Record
                     </p>
+
                     <p className="text-xs text-slate-500">
                       Created automatically
                     </p>
@@ -472,9 +545,11 @@ function HealthWorkerAppointments({ onBack }) {
 
                   <div className="bg-white rounded-xl p-4">
                     <Pill className="mx-auto text-green-600 mb-2" />
+
                     <p className="font-semibold">
                       Medicines
                     </p>
+
                     <p className="text-xs text-slate-500">
                       Prescription added
                     </p>
@@ -482,13 +557,16 @@ function HealthWorkerAppointments({ onBack }) {
 
                   <div className="bg-white rounded-xl p-4">
                     <CalendarClock className="mx-auto text-purple-600 mb-2" />
+
                     <p className="font-semibold">
                       Follow-up
                     </p>
+
                     <p className="text-xs text-slate-500">
                       Follow-up created
                     </p>
                   </div>
+
                 </div>
 
                 <button
@@ -497,6 +575,7 @@ function HealthWorkerAppointments({ onBack }) {
                 >
                   Back to Doctor Queue
                 </button>
+
               </div>
             )}
 
@@ -506,6 +585,9 @@ function HealthWorkerAppointments({ onBack }) {
     )
   }
 
+  // --------------------------------------------------
+  // QUEUE COUNTS
+  // --------------------------------------------------
   const waiting = appointments.filter(
     item => item.status === 'Waiting'
   )
@@ -518,6 +600,9 @@ function HealthWorkerAppointments({ onBack }) {
     item => item.status === 'Completed'
   )
 
+  // --------------------------------------------------
+  // MAIN QUEUE SCREEN
+  // --------------------------------------------------
   return (
     <div className="min-h-screen bg-sky-50 p-4 md:p-8">
       <div className="max-w-6xl mx-auto">
@@ -533,8 +618,10 @@ function HealthWorkerAppointments({ onBack }) {
         <div className="bg-white rounded-3xl shadow-lg p-6 md:p-8">
 
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+
             <div>
               <div className="flex items-center gap-3">
+
                 <div className="bg-sky-100 p-3 rounded-2xl">
                   <ClipboardList
                     className="text-sky-600"
@@ -551,21 +638,25 @@ function HealthWorkerAppointments({ onBack }) {
                     Manage patients waiting for consultation
                   </p>
                 </div>
+
               </div>
             </div>
 
             <div className="bg-green-50 text-green-700 px-4 py-2 rounded-full font-semibold">
               Live Queue
             </div>
+
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8">
 
             <div className="bg-blue-50 rounded-2xl p-5">
               <Clock className="text-blue-600 mb-2" />
+
               <p className="text-2xl font-bold text-slate-800">
                 {waiting.length}
               </p>
+
               <p className="text-sm text-slate-500">
                 Waiting
               </p>
@@ -573,9 +664,11 @@ function HealthWorkerAppointments({ onBack }) {
 
             <div className="bg-orange-50 rounded-2xl p-5">
               <Stethoscope className="text-orange-600 mb-2" />
+
               <p className="text-2xl font-bold text-slate-800">
                 {consultation.length}
               </p>
+
               <p className="text-sm text-slate-500">
                 In Consultation
               </p>
@@ -583,9 +676,11 @@ function HealthWorkerAppointments({ onBack }) {
 
             <div className="bg-green-50 rounded-2xl p-5">
               <CheckCircle className="text-green-600 mb-2" />
+
               <p className="text-2xl font-bold text-slate-800">
                 {completed.length}
               </p>
+
               <p className="text-sm text-slate-500">
                 Completed
               </p>
@@ -593,9 +688,11 @@ function HealthWorkerAppointments({ onBack }) {
 
             <div className="bg-purple-50 rounded-2xl p-5">
               <CalendarClock className="text-purple-600 mb-2" />
+
               <p className="text-2xl font-bold text-slate-800">
                 {appointments.length}
               </p>
+
               <p className="text-sm text-slate-500">
                 Total Appointments
               </p>
@@ -607,6 +704,7 @@ function HealthWorkerAppointments({ onBack }) {
 
             <div className="flex items-center gap-2 mb-5">
               <Clock className="text-sky-600" />
+
               <h2 className="text-xl font-bold text-slate-800">
                 Today's Queue
               </h2>
@@ -614,6 +712,7 @@ function HealthWorkerAppointments({ onBack }) {
 
             {appointments.length === 0 ? (
               <div className="text-center bg-slate-50 rounded-2xl p-10">
+
                 <ClipboardList
                   className="mx-auto text-slate-400 mb-3"
                   size={42}
@@ -622,9 +721,11 @@ function HealthWorkerAppointments({ onBack }) {
                 <p className="font-semibold text-slate-600">
                   No patients in the queue
                 </p>
+
               </div>
             ) : (
               <div className="space-y-4">
+
                 {appointments.map((appointment, index) => (
                   <div
                     key={appointment.id}
@@ -640,13 +741,18 @@ function HealthWorkerAppointments({ onBack }) {
                         </div>
 
                         <div>
+
                           <div className="flex flex-wrap items-center gap-2">
+
                             <h3 className="font-bold text-lg text-slate-800">
-                              {appointment.patient}
+                              {appointment.patient ||
+                                appointment.patientName ||
+                                'Patient'}
                             </h3>
 
                             <span className="text-xs bg-slate-100 px-3 py-1 rounded-full">
-                              {appointment.patientId}
+                              {appointment.patientId ||
+                                'Patient ID unavailable'}
                             </span>
 
                             <span
@@ -654,28 +760,41 @@ function HealthWorkerAppointments({ onBack }) {
                                 appointment.priority
                               )}`}
                             >
-                              {appointment.priority}
+                              {appointment.priority || 'Normal'}
                             </span>
+
                           </div>
 
                           <p className="text-sm text-slate-500 mt-1">
-                            Age {appointment.age} • {appointment.village}
+                            {appointment.age
+                              ? `Age ${appointment.age}`
+                              : 'Age unavailable'}
+
+                            {appointment.village
+                              ? ` • ${appointment.village}`
+                              : ''}
                           </p>
 
                           <div className="flex flex-wrap gap-4 mt-3 text-sm">
+
                             <span className="flex items-center gap-1">
                               <Clock size={15} />
-                              {appointment.time}
+                              {appointment.time ||
+                                'Time not specified'}
                             </span>
 
                             <span>
-                              {appointment.reason || 'General Consultation'}
+                              {appointment.reason ||
+                                'General Consultation'}
                             </span>
 
                             <span>
-                              {appointment.specialty}
+                              {appointment.specialty ||
+                                'General Medicine'}
                             </span>
+
                           </div>
+
                         </div>
 
                       </div>
@@ -686,12 +805,13 @@ function HealthWorkerAppointments({ onBack }) {
                           className={`px-4 py-2 rounded-full text-sm font-semibold ${
                             appointment.status === 'Waiting'
                               ? 'bg-blue-100 text-blue-700'
-                              : appointment.status === 'In Consultation'
+                              : appointment.status ===
+                                'In Consultation'
                               ? 'bg-orange-100 text-orange-700'
                               : 'bg-green-100 text-green-700'
                           }`}
                         >
-                          {appointment.status}
+                          {appointment.status || 'Waiting'}
                         </span>
 
                         {appointment.status !== 'Completed' && (
@@ -702,7 +822,9 @@ function HealthWorkerAppointments({ onBack }) {
                             className="bg-sky-600 text-white px-5 py-3 rounded-xl font-semibold flex items-center gap-2"
                           >
                             <Stethoscope size={18} />
-                            {appointment.status === 'In Consultation'
+
+                            {appointment.status ===
+                            'In Consultation'
                               ? 'Continue'
                               : 'Start Consultation'}
                           </button>
@@ -721,27 +843,34 @@ function HealthWorkerAppointments({ onBack }) {
 
                   </div>
                 ))}
+
               </div>
             )}
 
           </div>
 
           <div className="mt-8 bg-sky-50 rounded-2xl p-5">
+
             <div className="flex items-start gap-3">
+
               <FileText className="text-sky-600 mt-1" />
 
               <div>
+
                 <h3 className="font-bold text-slate-800">
                   Connected Digital Care
                 </h3>
 
                 <p className="text-sm text-slate-600 mt-1">
-                  Consultation prescriptions are automatically added to
-                  the patient's Medical Records, Medicines and Follow-up
-                  modules.
+                  Consultation prescriptions are automatically
+                  added to the patient's Medical Records,
+                  Medicines and Follow-up modules.
                 </p>
+
               </div>
+
             </div>
+
           </div>
 
         </div>
