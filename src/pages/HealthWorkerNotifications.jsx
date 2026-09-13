@@ -12,220 +12,204 @@ import {
   Phone,
   Activity
 } from 'lucide-react'
+import {
+  collection,
+  query,
+  where,
+  onSnapshot,
+  updateDoc,
+  deleteDoc,
+  doc
+} from 'firebase/firestore'
+import { auth, db } from '../firebase'
 
 function HealthWorkerNotifications({ onBack }) {
-  const defaultNotifications = [
-    {
-      id: 'HW-NOT-001',
-      type: 'Patient',
-      title: 'Patient Follow-up Due',
-      message: 'Ravi has a follow-up scheduled.',
-      time: '10 Sep 2026, 09:30 AM',
-      read: false
-    },
-    {
-      id: 'HW-NOT-002',
-      type: 'Referral',
-      title: 'Referral Requires Review',
-      message: 'A hospital referral is awaiting review.',
-      time: '10 Sep 2026, 09:10 AM',
-      read: false
+  const [notifications, setNotifications] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  const formatTime = (timestamp) => {
+    if (!timestamp) return 'Recently'
+
+    if (timestamp.toDate) {
+      return timestamp.toDate().toLocaleString('en-IN')
     }
-  ]
 
-  const [notifications, setNotifications] =
-    useState(defaultNotifications)
-
-  const loadNotifications = () => {
-    const emergencyAlerts = JSON.parse(
-      localStorage.getItem(
-        'sevacareEmergencyAlerts'
-      ) || '[]'
-    )
-
-    const referrals = JSON.parse(
-      localStorage.getItem(
-        'sevacareReferrals'
-      ) || '[]'
-    )
-
-    const followUps = JSON.parse(
-      localStorage.getItem(
-        'sevacareFollowUps'
-      ) || '[]'
-    )
-
-    const riskAlerts = JSON.parse(
-      localStorage.getItem(
-        'sevacareHighRiskAlerts'
-      ) || '[]'
-    )
-
-    const generated = []
-
-    emergencyAlerts.forEach((alert) => {
-      generated.push({
-        id: `EMERGENCY-${alert.id}`,
-        type: 'Emergency',
-        title: 'Emergency SOS Received',
-        message: `${alert.patient} reported ${alert.emergency} at ${alert.location}.`,
-        time: alert.time,
-        read: false,
-        patientId: alert.patientId,
-        patient: alert.patient,
-        phone: alert.phone
-      })
-    })
-
-    referrals.forEach((referral) => {
-      generated.push({
-        id: `REFERRAL-${referral.id}`,
-        type: 'Referral',
-        title: 'New Hospital Referral',
-        message: `${referral.patientName} was referred to ${referral.hospital}.`,
-        time: referral.date,
-        read: false,
-        patientId: referral.patientId,
-        patient: referral.patientName,
-        phone: referral.patientMobile
-      })
-    })
-
-    followUps.forEach((followUp) => {
-      generated.push({
-        id: `FOLLOWUP-${followUp.id}`,
-        type: 'Follow-up',
-        title: 'New Follow-up Added',
-        message: `${followUp.patient} has a new follow-up task.`,
-        time: followUp.createdAt || followUp.date,
-        read: false,
-        patientId: followUp.patientId,
-        patient: followUp.patient,
-        phone: followUp.mobile
-      })
-    })
-
-    riskAlerts.forEach((alert) => {
-      generated.push({
-        id: `RISK-${alert.id}`,
-        type: 'High Risk',
-        title: 'High-Risk Patient Alert',
-        message: `${alert.name} requires health-worker attention.`,
-        time: new Date().toLocaleString('en-IN'),
-        read: false,
-        patientId: alert.patientId,
-        patient: alert.name,
-        phone: alert.mobile
-      })
-    })
-
-    const combined = [
-      ...generated,
-      ...defaultNotifications
-    ]
-
-    const unique = combined.filter(
-      (item, index, array) =>
-        array.findIndex(
-          (x) => x.id === item.id
-        ) === index
-    )
-
-    setNotifications(unique)
+    return 'Recently'
   }
 
   useEffect(() => {
-    loadNotifications()
+    const user = auth.currentUser
 
-    const timer = setInterval(
-      loadNotifications,
-      2000
+    if (!user) {
+      setNotifications([])
+      setLoading(false)
+      return
+    }
+
+    const notificationsQuery = query(
+      collection(db, 'notifications'),
+      where('role', '==', 'healthWorker')
     )
 
-    return () =>
-      clearInterval(timer)
+    const unsubscribe = onSnapshot(
+      notificationsQuery,
+      (snapshot) => {
+        const data = snapshot.docs.map((item) => {
+          const notification = item.data()
+
+          return {
+            firestoreId: item.id,
+            id: notification.id || item.id,
+            type: notification.type || 'Patient',
+            title: notification.title || 'Notification',
+            message: notification.message || '',
+            time:
+              notification.time ||
+              formatTime(notification.createdAt),
+            createdAt: notification.createdAt,
+            read: notification.read || false,
+            patientId: notification.patientId || '',
+            patientUid: notification.patientUid || '',
+            patient: notification.patient || '',
+            phone: notification.phone || '',
+            emergencyId: notification.emergencyId || '',
+            emergencyFirestoreId:
+              notification.emergencyFirestoreId || ''
+          }
+        })
+
+        data.sort((a, b) => {
+          const aTime = a.createdAt?.seconds || 0
+          const bTime = b.createdAt?.seconds || 0
+
+          return bTime - aTime
+        })
+
+        setNotifications(data)
+        setLoading(false)
+      },
+      (error) => {
+        console.error(
+          'Health Worker Notification Error:',
+          error
+        )
+        setLoading(false)
+      }
+    )
+
+    return () => unsubscribe()
   }, [])
 
   const unread = notifications.filter(
     (item) => !item.read
   )
 
-  const emergencyCount =
-    notifications.filter(
-      (item) =>
-        item.type === 'Emergency' &&
-        !item.read
-    ).length
+  const emergencyCount = notifications.filter(
+    (item) =>
+      item.type === 'Emergency' &&
+      !item.read
+  ).length
 
-  const riskCount =
-    notifications.filter(
-      (item) =>
-        item.type === 'High Risk' &&
-        !item.read
-    ).length
+  const riskCount = notifications.filter(
+    (item) =>
+      item.type === 'High Risk' &&
+      !item.read
+  ).length
 
-  const markRead = (id) => {
-    setNotifications(
-      notifications.map((item) =>
-        item.id === id
-          ? {
-              ...item,
+  const markRead = async (notification) => {
+    try {
+      await updateDoc(
+        doc(
+          db,
+          'notifications',
+          notification.firestoreId
+        ),
+        {
+          read: true
+        }
+      )
+    } catch (error) {
+      console.error(
+        'Mark read error:',
+        error
+      )
+    }
+  }
+
+  const markAllRead = async () => {
+    try {
+      await Promise.all(
+        unread.map((notification) =>
+          updateDoc(
+            doc(
+              db,
+              'notifications',
+              notification.firestoreId
+            ),
+            {
               read: true
             }
-          : item
+          )
+        )
       )
-    )
+    } catch (error) {
+      console.error(
+        'Mark all read error:',
+        error
+      )
+    }
   }
 
-  const markAllRead = () => {
-    setNotifications(
-      notifications.map((item) => ({
-        ...item,
-        read: true
-      }))
-    )
+  const removeNotification = async (
+    notification
+  ) => {
+    try {
+      await deleteDoc(
+        doc(
+          db,
+          'notifications',
+          notification.firestoreId
+        )
+      )
+    } catch (error) {
+      console.error(
+        'Delete notification error:',
+        error
+      )
+    }
   }
 
-  const removeNotification = (id) => {
-    setNotifications(
-      notifications.filter(
-        (item) => item.id !== id
+  const callPatient = (notification) => {
+    if (!notification.phone) {
+      alert(
+        'Patient phone number is not available.'
       )
+      return
+    }
+
+    alert(
+      `Calling ${notification.patient}\n${notification.phone}`
     )
   }
 
   const getIcon = (type) => {
     if (type === 'Emergency') {
-      return (
-        <AlertTriangle
-          size={23}
-        />
-      )
+      return <AlertTriangle size={23} />
     }
 
     if (type === 'Referral') {
-      return (
-        <Hospital size={23} />
-      )
+      return <Hospital size={23} />
     }
 
     if (type === 'Follow-up') {
-      return (
-        <CalendarClock
-          size={23}
-        />
-      )
+      return <CalendarClock size={23} />
     }
 
     if (type === 'High Risk') {
-      return (
-        <Activity size={23} />
-      )
+      return <Activity size={23} />
     }
 
-    return (
-      <UserRound size={23} />
-    )
+    return <UserRound size={23} />
   }
 
   const getStyle = (type) => {
@@ -246,17 +230,6 @@ function HealthWorkerNotifications({ onBack }) {
     }
 
     return 'bg-blue-100 text-blue-600'
-  }
-
-  const callPatient = (notification) => {
-    if (!notification.phone) {
-      alert('Patient phone number is not available.')
-      return
-    }
-
-    alert(
-      `Calling ${notification.patient}\n${notification.phone}`
-    )
   }
 
   return (
@@ -291,8 +264,7 @@ function HealthWorkerNotifications({ onBack }) {
               </div>
 
               <p className="text-blue-100 mt-3 max-w-2xl">
-                Patient emergencies, referrals, follow-ups and risk alerts
-                appear here automatically.
+                Patient emergencies, referrals, follow-ups and risk alerts appear here automatically.
               </p>
             </div>
 
@@ -310,10 +282,7 @@ function HealthWorkerNotifications({ onBack }) {
 
         <section className="grid md:grid-cols-4 gap-5 mt-7">
           <div className="bg-white rounded-2xl border border-red-100 p-5 shadow-sm">
-            <AlertTriangle
-              className="text-red-600"
-              size={28}
-            />
+            <AlertTriangle className="text-red-600" size={28} />
 
             <p className="text-sm text-gray-500 mt-4">
               Emergency
@@ -325,10 +294,7 @@ function HealthWorkerNotifications({ onBack }) {
           </div>
 
           <div className="bg-white rounded-2xl border border-purple-100 p-5 shadow-sm">
-            <Activity
-              className="text-purple-600"
-              size={28}
-            />
+            <Activity className="text-purple-600" size={28} />
 
             <p className="text-sm text-gray-500 mt-4">
               High Risk
@@ -340,10 +306,7 @@ function HealthWorkerNotifications({ onBack }) {
           </div>
 
           <div className="bg-white rounded-2xl border border-orange-100 p-5 shadow-sm">
-            <Hospital
-              className="text-orange-600"
-              size={28}
-            />
+            <Hospital className="text-orange-600" size={28} />
 
             <p className="text-sm text-gray-500 mt-4">
               Referrals
@@ -352,19 +315,14 @@ function HealthWorkerNotifications({ onBack }) {
             <p className="text-3xl font-bold text-orange-700">
               {
                 notifications.filter(
-                  (item) =>
-                    item.type ===
-                    'Referral'
+                  (item) => item.type === 'Referral'
                 ).length
               }
             </p>
           </div>
 
           <div className="bg-white rounded-2xl border border-green-100 p-5 shadow-sm">
-            <CalendarClock
-              className="text-green-600"
-              size={28}
-            />
+            <CalendarClock className="text-green-600" size={28} />
 
             <p className="text-sm text-gray-500 mt-4">
               Follow-ups
@@ -373,9 +331,7 @@ function HealthWorkerNotifications({ onBack }) {
             <p className="text-3xl font-bold text-green-700">
               {
                 notifications.filter(
-                  (item) =>
-                    item.type ===
-                    'Follow-up'
+                  (item) => item.type === 'Follow-up'
                 ).length
               }
             </p>
@@ -411,7 +367,7 @@ function HealthWorkerNotifications({ onBack }) {
               </h2>
 
               <p className="text-gray-500 mt-1">
-                Automatically synchronized from SevaCare activities.
+                Automatically synchronized from Firebase.
               </p>
             </div>
 
@@ -427,7 +383,13 @@ function HealthWorkerNotifications({ onBack }) {
           </div>
 
           <div className="space-y-4 mt-6">
-            {notifications.length === 0 ? (
+            {loading ? (
+              <div className="text-center py-12">
+                <p className="text-gray-500">
+                  Loading notifications...
+                </p>
+              </div>
+            ) : notifications.length === 0 ? (
               <div className="text-center py-12">
                 <Bell
                   className="mx-auto text-gray-300"
@@ -439,104 +401,86 @@ function HealthWorkerNotifications({ onBack }) {
                 </p>
               </div>
             ) : (
-              notifications.map(
-                (notification) => (
-                  <div
-                    key={notification.id}
-                    className={`rounded-2xl border p-5 ${
-                      notification.read
-                        ? 'bg-gray-50 border-gray-200'
-                        : 'bg-blue-50 border-blue-200'
-                    }`}
-                  >
-                    <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-5">
-                      <div className="flex gap-4">
-                        <div
-                          className={`p-3 rounded-xl h-fit ${getStyle(
-                            notification.type
-                          )}`}
-                        >
-                          {getIcon(
-                            notification.type
+              notifications.map((notification) => (
+                <div
+                  key={notification.firestoreId}
+                  className={`rounded-2xl border p-5 ${
+                    notification.read
+                      ? 'bg-gray-50 border-gray-200'
+                      : 'bg-blue-50 border-blue-200'
+                  }`}
+                >
+                  <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-5">
+                    <div className="flex gap-4">
+                      <div
+                        className={`p-3 rounded-xl h-fit ${getStyle(
+                          notification.type
+                        )}`}
+                      >
+                        {getIcon(notification.type)}
+                      </div>
+
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="font-bold text-gray-800">
+                            {notification.title}
+                          </h3>
+
+                          {!notification.read && (
+                            <span className="text-xs bg-blue-600 text-white px-2 py-1 rounded-full">
+                              NEW
+                            </span>
                           )}
                         </div>
 
-                        <div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="font-bold text-gray-800">
-                              {
-                                notification.title
-                              }
-                            </h3>
+                        <p className="text-gray-600 mt-2">
+                          {notification.message}
+                        </p>
 
-                            {!notification.read && (
-                              <span className="text-xs bg-blue-600 text-white px-2 py-1 rounded-full">
-                                NEW
-                              </span>
-                            )}
-                          </div>
-
-                          <p className="text-gray-600 mt-2">
-                            {
-                              notification.message
-                            }
-                          </p>
-
-                          <div className="flex items-center gap-2 text-sm text-gray-400 mt-3">
-                            <Clock size={14} />
-                            {
-                              notification.time
-                            }
-                          </div>
+                        <div className="flex items-center gap-2 text-sm text-gray-400 mt-3">
+                          <Clock size={14} />
+                          {notification.time}
                         </div>
                       </div>
+                    </div>
 
-                      <div className="flex flex-wrap gap-2">
-                        {notification.phone && (
-                          <button
-                            onClick={() =>
-                              callPatient(
-                                notification
-                              )
-                            }
-                            className="bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-semibold"
-                          >
-                            <Phone size={15} />
-                            Call
-                          </button>
-                        )}
-
-                        {!notification.read && (
-                          <button
-                            onClick={() =>
-                              markRead(
-                                notification.id
-                              )
-                            }
-                            className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-semibold"
-                          >
-                            <CheckCircle
-                              size={15}
-                            />
-                            Read
-                          </button>
-                        )}
-
+                    <div className="flex flex-wrap gap-2">
+                      {notification.phone && (
                         <button
                           onClick={() =>
-                            removeNotification(
-                              notification.id
-                            )
+                            callPatient(notification)
                           }
-                          className="border border-gray-200 text-gray-500 px-3 py-2 rounded-lg"
+                          className="bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-semibold"
                         >
-                          <Trash2 size={15} />
+                          <Phone size={15} />
+                          Call
                         </button>
-                      </div>
+                      )}
+
+                      {!notification.read && (
+                        <button
+                          onClick={() =>
+                            markRead(notification)
+                          }
+                          className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-semibold"
+                        >
+                          <CheckCircle size={15} />
+                          Read
+                        </button>
+                      )}
+
+                      <button
+                        onClick={() =>
+                          removeNotification(notification)
+                        }
+                        className="border border-gray-200 text-gray-500 px-3 py-2 rounded-lg"
+                      >
+                        <Trash2 size={15} />
+                      </button>
                     </div>
                   </div>
-                )
-              )
+                </div>
+              ))
             )}
           </div>
         </section>

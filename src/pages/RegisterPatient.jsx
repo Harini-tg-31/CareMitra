@@ -8,6 +8,8 @@ import {
   MapPin,
   HeartPulse
 } from 'lucide-react'
+import { collection, addDoc } from 'firebase/firestore'
+import { db } from '../firebase'
 
 function RegisterPatient({ onBack }) {
   const [form, setForm] = useState({
@@ -21,6 +23,7 @@ function RegisterPatient({ onBack }) {
   })
 
   const [registered, setRegistered] = useState(null)
+  const [saving, setSaving] = useState(false)
 
   const handleChange = e => {
     setForm({
@@ -29,7 +32,7 @@ function RegisterPatient({ onBack }) {
     })
   }
 
-  const handleSubmit = e => {
+  const handleSubmit = async e => {
     e.preventDefault()
 
     if (
@@ -43,37 +46,50 @@ function RegisterPatient({ onBack }) {
       return
     }
 
-    const patient = {
-      id: `SC-2026-${Math.floor(1000 + Math.random() * 8999)}`,
-      name: form.name,
-      mobile: form.mobile,
-      age: Number(form.age),
-      gender: form.gender,
-      village: form.village,
-      bloodGroup: form.bloodGroup || 'Not Provided',
-      emergencyContact:
-        form.emergencyContact || 'Not Provided',
-      status: 'Newly Registered',
-      risk: 'Low',
-      registeredAt: new Date().toLocaleString('en-IN')
+    try {
+      setSaving(true)
+
+      const patient = {
+        id: `SC-2026-${Math.floor(1000 + Math.random() * 8999)}`,
+        name: form.name,
+        mobile: form.mobile,
+        age: Number(form.age),
+        gender: form.gender,
+        village: form.village,
+        bloodGroup: form.bloodGroup || 'Not Provided',
+        emergencyContact:
+          form.emergencyContact || 'Not Provided',
+        status: 'Newly Registered',
+        risk: 'Low',
+        registeredAt: new Date().toISOString()
+      }
+
+      await addDoc(collection(db, 'patients'), patient)
+
+      setRegistered(patient)
+
+      setForm({
+        name: '',
+        mobile: '',
+        age: '',
+        gender: '',
+        village: '',
+        bloodGroup: '',
+        emergencyContact: ''
+      })
+    } catch (error) {
+      console.error('Error registering patient:', error)
+      alert('Unable to register patient. Please check Firebase connection.')
+    } finally {
+      setSaving(false)
     }
-
-    const existing = JSON.parse(
-      localStorage.getItem('sevacarePatients') || '[]'
-    )
-
-    localStorage.setItem(
-      'sevacarePatients',
-      JSON.stringify([patient, ...existing])
-    )
-
-    setRegistered(patient)
   }
 
   if (registered) {
     return (
       <div className="min-h-screen bg-sky-50 p-6">
         <div className="max-w-3xl mx-auto">
+
           <button
             onClick={onBack}
             className="flex items-center gap-2 text-sky-700 font-semibold mb-6"
@@ -83,6 +99,7 @@ function RegisterPatient({ onBack }) {
           </button>
 
           <div className="bg-white rounded-3xl shadow-lg p-8 text-center border border-green-100">
+
             <div className="w-20 h-20 mx-auto rounded-full bg-green-100 text-green-600 flex items-center justify-center">
               <CheckCircle size={45} />
             </div>
@@ -92,14 +109,16 @@ function RegisterPatient({ onBack }) {
             </h1>
 
             <p className="text-slate-500 mt-2">
-              The patient has been added to the SevaCare patient registry.
+              The patient has been added to the CareMitra Firebase patient registry.
             </p>
 
             <div className="bg-sky-50 rounded-2xl p-6 text-left mt-8 space-y-4">
+
               <div>
                 <p className="text-xs text-slate-500">
                   Patient ID
                 </p>
+
                 <p className="font-bold text-lg text-sky-700">
                   {registered.id}
                 </p>
@@ -109,6 +128,7 @@ function RegisterPatient({ onBack }) {
                 <p className="text-xs text-slate-500">
                   Patient Name
                 </p>
+
                 <p className="font-bold">
                   {registered.name}
                 </p>
@@ -118,6 +138,7 @@ function RegisterPatient({ onBack }) {
                 <p className="text-xs text-slate-500">
                   Mobile
                 </p>
+
                 <p className="font-semibold">
                   {registered.mobile}
                 </p>
@@ -127,21 +148,35 @@ function RegisterPatient({ onBack }) {
                 <p className="text-xs text-slate-500">
                   Village
                 </p>
+
                 <p className="font-semibold">
                   {registered.village}
                 </p>
               </div>
+
+              <div>
+                <p className="text-xs text-slate-500">
+                  Risk
+                </p>
+
+                <p className="font-semibold text-green-600">
+                  {registered.risk}
+                </p>
+              </div>
+
             </div>
 
             <div className="bg-green-50 border border-green-200 rounded-xl p-4 mt-6">
+
               <p className="font-semibold text-green-700">
                 Connected Patient Registry
               </p>
 
               <p className="text-sm text-green-600 mt-1">
-                This patient can now appear in Patient List, Triage,
-                Referrals and Health Summary.
+                This patient is now stored in Firebase and can appear in
+                Patient List, Triage, Referrals and Health Summary.
               </p>
+
             </div>
 
             <button
@@ -150,6 +185,7 @@ function RegisterPatient({ onBack }) {
             >
               Return to Dashboard
             </button>
+
           </div>
         </div>
       </div>
@@ -159,6 +195,7 @@ function RegisterPatient({ onBack }) {
   return (
     <div className="min-h-screen bg-sky-50 p-6">
       <div className="max-w-4xl mx-auto">
+
         <button
           onClick={onBack}
           className="flex items-center gap-2 text-sky-700 font-semibold mb-6"
@@ -168,8 +205,11 @@ function RegisterPatient({ onBack }) {
         </button>
 
         <div className="bg-white rounded-3xl shadow-lg border border-sky-100 overflow-hidden">
+
           <div className="bg-gradient-to-r from-sky-700 to-cyan-600 p-8 text-white">
+
             <div className="flex items-center gap-4">
+
               <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center">
                 <UserPlus size={30} />
               </div>
@@ -183,20 +223,25 @@ function RegisterPatient({ onBack }) {
                   Create a digital patient record for community care.
                 </p>
               </div>
+
             </div>
+
           </div>
 
           <form
             onSubmit={handleSubmit}
             className="p-8 space-y-6"
           >
+
             <div className="grid md:grid-cols-2 gap-5">
+
               <div>
                 <label className="block font-semibold mb-2">
                   Patient Name *
                 </label>
 
                 <div className="relative">
+
                   <User
                     size={18}
                     className="absolute left-4 top-4 text-slate-400"
@@ -209,6 +254,7 @@ function RegisterPatient({ onBack }) {
                     placeholder="Enter patient name"
                     className="w-full border border-slate-200 rounded-xl pl-11 pr-4 py-3 outline-none focus:border-sky-500"
                   />
+
                 </div>
               </div>
 
@@ -218,6 +264,7 @@ function RegisterPatient({ onBack }) {
                 </label>
 
                 <div className="relative">
+
                   <Phone
                     size={18}
                     className="absolute left-4 top-4 text-slate-400"
@@ -230,6 +277,7 @@ function RegisterPatient({ onBack }) {
                     placeholder="Enter mobile number"
                     className="w-full border border-slate-200 rounded-xl pl-11 pr-4 py-3 outline-none focus:border-sky-500"
                   />
+
                 </div>
               </div>
 
@@ -264,6 +312,7 @@ function RegisterPatient({ onBack }) {
                   <option value="">
                     Select gender
                   </option>
+
                   <option>Female</option>
                   <option>Male</option>
                   <option>Other</option>
@@ -276,6 +325,7 @@ function RegisterPatient({ onBack }) {
                 </label>
 
                 <div className="relative">
+
                   <MapPin
                     size={18}
                     className="absolute left-4 top-4 text-slate-400"
@@ -288,6 +338,7 @@ function RegisterPatient({ onBack }) {
                     placeholder="Enter village"
                     className="w-full border border-slate-200 rounded-xl pl-11 pr-4 py-3 outline-none focus:border-sky-500"
                   />
+
                 </div>
               </div>
 
@@ -305,6 +356,7 @@ function RegisterPatient({ onBack }) {
                   <option value="">
                     Select blood group
                   </option>
+
                   <option>A+</option>
                   <option>A-</option>
                   <option>B+</option>
@@ -315,6 +367,7 @@ function RegisterPatient({ onBack }) {
                   <option>O-</option>
                 </select>
               </div>
+
             </div>
 
             <div>
@@ -332,29 +385,38 @@ function RegisterPatient({ onBack }) {
             </div>
 
             <div className="bg-sky-50 border border-sky-100 rounded-2xl p-5">
+
               <div className="flex items-center gap-3">
+
                 <HeartPulse className="text-sky-600" />
 
                 <div>
+
                   <p className="font-semibold">
                     Connected Digital Record
                   </p>
 
                   <p className="text-sm text-slate-500 mt-1">
-                    The registered patient can be used across SevaCare
-                    triage, referral, follow-up and health summary modules.
+                    Patient information will be securely stored in Firebase
+                    and used across CareMitra healthcare modules.
                   </p>
+
                 </div>
+
               </div>
+
             </div>
 
             <button
               type="submit"
-              className="w-full bg-sky-600 hover:bg-sky-700 text-white py-4 rounded-xl font-bold text-lg"
+              disabled={saving}
+              className="w-full bg-sky-600 hover:bg-sky-700 disabled:bg-slate-400 text-white py-4 rounded-xl font-bold text-lg"
             >
-              Register Patient
+              {saving ? 'Registering Patient...' : 'Register Patient'}
             </button>
+
           </form>
+
         </div>
       </div>
     </div>
