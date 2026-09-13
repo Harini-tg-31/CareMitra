@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import {
   Search,
   Stethoscope,
@@ -19,6 +20,15 @@ import {
   ShieldCheck
 } from 'lucide-react'
 
+import {
+  collection,
+  query,
+  where,
+  onSnapshot
+} from 'firebase/firestore'
+
+import { auth, db } from '../firebase'
+
 function PatientDashboard({
   user,
   onSearch,
@@ -38,24 +48,296 @@ function PatientDashboard({
   onHealthSummary,
   onLogout
 }) {
-  const patientName = user?.name || 'Patient'
-  const patientMobile = user?.mobile || ''
+  const [patientData, setPatientData] = useState(user || {})
+  const [appointments, setAppointments] = useState([])
+  const [followUps, setFollowUps] = useState([])
+  const [unreadNotifications, setUnreadNotifications] = useState(0)
+  const [emergencyActive, setEmergencyActive] = useState(false)
+
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const currentUser = auth.currentUser
+
+    if (!currentUser) {
+      setLoading(false)
+      return
+    }
+
+    const uid = currentUser.uid
+
+    const unsubscribers = []
+
+    // -----------------------------
+    // Patient Profile
+    // -----------------------------
+    const userQuery = query(
+      collection(db, 'users'),
+      where('__name__', '==', uid)
+    )
+
+    const unsubscribeUser = onSnapshot(
+      userQuery,
+      (snapshot) => {
+        if (!snapshot.empty) {
+          setPatientData({
+            ...user,
+            ...snapshot.docs[0].data()
+          })
+        } else {
+          setPatientData(user || {})
+        }
+      },
+      (error) => {
+        console.error(
+          'Patient profile error:',
+          error
+        )
+        setPatientData(user || {})
+      }
+    )
+
+    unsubscribers.push(unsubscribeUser)
+
+    // -----------------------------
+    // Appointments
+    // -----------------------------
+    const appointmentQuery = query(
+      collection(db, 'appointments'),
+      where('patientId', '==', uid)
+    )
+
+    const unsubscribeAppointments = onSnapshot(
+      appointmentQuery,
+      (snapshot) => {
+        const data = snapshot.docs.map((item) => ({
+          id: item.id,
+          ...item.data()
+        }))
+
+        setAppointments(data)
+      },
+      (error) => {
+        console.error(
+          'Appointment Firebase error:',
+          error
+        )
+      }
+    )
+
+    unsubscribers.push(unsubscribeAppointments)
+
+    // -----------------------------
+    // Follow-ups
+    // -----------------------------
+    const followUpQuery = query(
+      collection(db, 'followUps'),
+      where('patientId', '==', uid)
+    )
+
+    const unsubscribeFollowUps = onSnapshot(
+      followUpQuery,
+      (snapshot) => {
+        const data = snapshot.docs.map((item) => ({
+          id: item.id,
+          ...item.data()
+        }))
+
+        setFollowUps(data)
+      },
+      (error) => {
+        console.error(
+          'Follow-up Firebase error:',
+          error
+        )
+      }
+    )
+
+    unsubscribers.push(unsubscribeFollowUps)
+
+    // -----------------------------
+    // Notifications
+    // -----------------------------
+    const notificationQuery = query(
+      collection(db, 'notifications'),
+      where('userId', '==', uid),
+      where('read', '==', false)
+    )
+
+    const unsubscribeNotifications = onSnapshot(
+      notificationQuery,
+      (snapshot) => {
+        setUnreadNotifications(
+          snapshot.size
+        )
+      },
+      (error) => {
+        console.error(
+          'Notification Firebase error:',
+          error
+        )
+      }
+    )
+
+    unsubscribers.push(
+      unsubscribeNotifications
+    )
+
+    // -----------------------------
+    // Emergency Requests
+    // -----------------------------
+    const emergencyQuery = query(
+      collection(db, 'emergencyRequests'),
+      where('patientUid', '==', uid)
+    )
+
+    const unsubscribeEmergency = onSnapshot(
+      emergencyQuery,
+      (snapshot) => {
+        const active = snapshot.docs.some(
+          (item) => {
+            const data = item.data()
+
+            return (
+              data.status !== 'Patient Reached' &&
+              data.status !== 'Completed'
+            )
+          }
+        )
+
+        setEmergencyActive(active)
+      },
+      (error) => {
+        console.error(
+          'Emergency Firebase error:',
+          error
+        )
+      }
+    )
+
+    unsubscribers.push(
+      unsubscribeEmergency
+    )
+
+    setLoading(false)
+
+    return () => {
+      unsubscribers.forEach(
+        (unsubscribe) => unsubscribe()
+      )
+    }
+  }, [user])
+
+  const patientName =
+    patientData?.name ||
+    patientData?.fullName ||
+    user?.name ||
+    'Patient'
+
+  const patientMobile =
+    patientData?.mobile ||
+    patientData?.phone ||
+    user?.mobile ||
+    ''
+
+  const appointmentCount =
+    appointments.filter(
+      (item) =>
+        item.status !== 'Completed' &&
+        item.status !== 'Cancelled'
+    ).length
+
+  const followUpCount =
+    followUps.filter(
+      (item) =>
+        item.status !== 'Completed'
+    ).length
 
   const services = [
-    ['Find Healthcare', 'Find doctors, hospitals and PHCs', Search, onSearch],
-    ['Digital Triage', 'Check your symptoms', Stethoscope, onTriage],
-    ['Appointments', 'Book and manage appointments', CalendarDays, onAppointment],
-    ['Travel Planner', 'Plan your healthcare journey', Map, onTravel],
-    ['Cost & Entitlement', 'View costs and scheme support', IndianRupee, onCost],
-    ['Medical Records', 'View your health records', FileText, onRecords],
-    ['Medicines', 'View prescriptions and medicines', Pill, onMedicines],
-    ['Diagnostics', 'Book and view diagnostic tests', FlaskConical, onDiagnostics],
-    ['Follow-ups', 'Track your follow-up care', ClipboardCheck, onFollowUps],
-    ['Notifications', 'View important health updates', Bell, onNotifications],
-    ['Voice Support', 'Healthcare support in your language', Mic, onVoice],
-    ['Offline Mode', 'Access saved information offline', WifiOff, onOffline],
-    ['Health Summary', 'View your complete health summary', Activity, onHealthSummary],
-    ['My Profile', 'Manage your personal details', User, onProfile]
+    [
+      'Find Healthcare',
+      'Find doctors, hospitals and PHCs',
+      Search,
+      onSearch
+    ],
+    [
+      'Digital Triage',
+      'Check your symptoms',
+      Stethoscope,
+      onTriage
+    ],
+    [
+      'Appointments',
+      'Book and manage appointments',
+      CalendarDays,
+      onAppointment
+    ],
+    [
+      'Travel Planner',
+      'Plan your healthcare journey',
+      Map,
+      onTravel
+    ],
+    [
+      'Cost & Entitlement',
+      'View costs and scheme support',
+      IndianRupee,
+      onCost
+    ],
+    [
+      'Medical Records',
+      'View your health records',
+      FileText,
+      onRecords
+    ],
+    [
+      'Medicines',
+      'View prescriptions and medicines',
+      Pill,
+      onMedicines
+    ],
+    [
+      'Diagnostics',
+      'Book and view diagnostic tests',
+      FlaskConical,
+      onDiagnostics
+    ],
+    [
+      'Follow-ups',
+      'Track your follow-up care',
+      ClipboardCheck,
+      onFollowUps
+    ],
+    [
+      'Notifications',
+      'View important health updates',
+      Bell,
+      onNotifications
+    ],
+    [
+      'Voice Support',
+      'Healthcare support in your language',
+      Mic,
+      onVoice
+    ],
+    [
+      'Offline Mode',
+      'Access saved information offline',
+      WifiOff,
+      onOffline
+    ],
+    [
+      'Health Summary',
+      'View your complete health summary',
+      Activity,
+      onHealthSummary
+    ],
+    [
+      'My Profile',
+      'Manage your personal details',
+      User,
+      onProfile
+    ]
   ]
 
   return (
@@ -66,13 +348,17 @@ function PatientDashboard({
 
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-xl bg-sky-600 flex items-center justify-center">
-              <HeartPulse size={25} className="text-white" />
+              <HeartPulse
+                size={25}
+                className="text-white"
+              />
             </div>
 
             <div>
               <h1 className="text-xl font-bold text-sky-700">
                 CareMitra
               </h1>
+
               <p className="text-xs text-slate-500">
                 Healthcare Support
               </p>
@@ -83,16 +369,28 @@ function PatientDashboard({
 
             <button
               onClick={onNotifications}
-              className="p-3 rounded-xl bg-sky-50 text-sky-600 hover:bg-sky-100"
+              className="relative p-3 rounded-xl bg-sky-50 text-sky-600 hover:bg-sky-100"
             >
               <Bell size={20} />
+
+              {unreadNotifications > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 bg-red-600 text-white text-xs rounded-full flex items-center justify-center">
+                  {unreadNotifications > 9
+                    ? '9+'
+                    : unreadNotifications}
+                </span>
+              )}
             </button>
 
             <button
               onClick={onProfile}
               className="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-xl"
             >
-              <User size={18} className="text-sky-600" />
+              <User
+                size={18}
+                className="text-sky-600"
+              />
+
               <span className="hidden sm:block text-sm font-semibold text-slate-700">
                 {patientName}
               </span>
@@ -144,7 +442,11 @@ function PatientDashboard({
 
         <button
           onClick={onEmergency}
-          className="w-full bg-red-600 hover:bg-red-700 text-white rounded-2xl p-5 mb-7 flex items-center justify-between shadow-lg"
+          className={`w-full ${
+            emergencyActive
+              ? 'bg-red-700'
+              : 'bg-red-600 hover:bg-red-700'
+          } text-white rounded-2xl p-5 mb-7 flex items-center justify-between shadow-lg`}
         >
 
           <div className="flex items-center gap-4">
@@ -155,11 +457,15 @@ function PatientDashboard({
 
             <div className="text-left">
               <h3 className="text-lg font-bold">
-                Emergency SOS
+                {emergencyActive
+                  ? 'Emergency Request Active'
+                  : 'Emergency SOS'}
               </h3>
 
               <p className="text-red-100 text-sm">
-                Get immediate emergency healthcare support
+                {emergencyActive
+                  ? 'Your emergency request is being handled.'
+                  : 'Get immediate emergency healthcare support'}
               </p>
             </div>
 
@@ -170,6 +476,72 @@ function PatientDashboard({
           </span>
 
         </button>
+
+        <section className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+
+          <div className="bg-white rounded-2xl p-5 border border-blue-100 shadow-sm">
+            <CalendarDays
+              className="text-blue-600"
+              size={26}
+            />
+
+            <p className="text-sm text-slate-500 mt-3">
+              Appointments
+            </p>
+
+            <p className="text-3xl font-bold text-slate-800">
+              {appointmentCount}
+            </p>
+          </div>
+
+          <div className="bg-white rounded-2xl p-5 border border-green-100 shadow-sm">
+            <ClipboardCheck
+              className="text-green-600"
+              size={26}
+            />
+
+            <p className="text-sm text-slate-500 mt-3">
+              Follow-ups
+            </p>
+
+            <p className="text-3xl font-bold text-slate-800">
+              {followUpCount}
+            </p>
+          </div>
+
+          <div className="bg-white rounded-2xl p-5 border border-purple-100 shadow-sm">
+            <Bell
+              className="text-purple-600"
+              size={26}
+            />
+
+            <p className="text-sm text-slate-500 mt-3">
+              Notifications
+            </p>
+
+            <p className="text-3xl font-bold text-slate-800">
+              {unreadNotifications}
+            </p>
+          </div>
+
+          <div className="bg-white rounded-2xl p-5 border border-red-100 shadow-sm">
+            <Siren
+              className="text-red-600"
+              size={26}
+            />
+
+            <p className="text-sm text-slate-500 mt-3">
+              Emergency
+            </p>
+
+            <p className="text-lg font-bold text-slate-800">
+              {emergencyActive
+                ? 'Active'
+                : 'None'}
+            </p>
+          </div>
+
+        </section>
 
         <div className="mb-5">
           <h2 className="text-2xl font-bold text-slate-800">
@@ -183,27 +555,29 @@ function PatientDashboard({
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
 
-          {services.map(([title, text, Icon, action]) => (
-            <button
-              key={title}
-              onClick={action}
-              className="bg-white rounded-2xl p-5 text-left shadow-sm border border-slate-100 hover:shadow-lg hover:border-sky-200 group"
-            >
+          {services.map(
+            ([title, text, Icon, action]) => (
+              <button
+                key={title}
+                onClick={action}
+                className="bg-white rounded-2xl p-5 text-left shadow-sm border border-slate-100 hover:shadow-lg hover:border-sky-200 group"
+              >
 
-              <div className="w-12 h-12 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center mb-4 group-hover:bg-sky-600 group-hover:text-white">
-                <Icon size={24} />
-              </div>
+                <div className="w-12 h-12 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center mb-4 group-hover:bg-sky-600 group-hover:text-white">
+                  <Icon size={24} />
+                </div>
 
-              <h3 className="font-bold text-slate-800">
-                {title}
-              </h3>
+                <h3 className="font-bold text-slate-800">
+                  {title}
+                </h3>
 
-              <p className="text-sm text-slate-500 mt-1">
-                {text}
-              </p>
+                <p className="text-sm text-slate-500 mt-1">
+                  {text}
+                </p>
 
-            </button>
-          ))}
+              </button>
+            )
+          )}
 
         </div>
 
@@ -229,24 +603,65 @@ function PatientDashboard({
 
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
 
-            {['Registration', 'Triage', 'Consultation', 'Prescription', 'Follow-up'].map(
-              (step, index) => (
+            {[
+              'Registration',
+              'Triage',
+              'Consultation',
+              'Prescription',
+              'Follow-up'
+            ].map((step, index) => {
+
+              const completed =
+                index === 0 ||
+                (index === 1 &&
+                  appointments.length > 0) ||
+                (index === 2 &&
+                  appointments.some(
+                    (item) =>
+                      item.status === 'Completed'
+                  )) ||
+                (index === 3 &&
+                  appointments.some(
+                    (item) =>
+                      item.prescription ||
+                      item.prescriptionId
+                  )) ||
+                (index === 4 &&
+                  followUps.length > 0)
+
+              return (
                 <div
                   key={step}
                   className="flex flex-col items-center text-center"
                 >
 
-                  <div className="w-10 h-10 rounded-full bg-sky-100 text-sky-600 flex items-center justify-center font-bold">
-                    {index + 1}
+                  <div
+                    className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${
+                      completed
+                        ? 'bg-emerald-100 text-emerald-600'
+                        : 'bg-slate-100 text-slate-400'
+                    }`}
+                  >
+                    {completed ? (
+                      '✓'
+                    ) : (
+                      index + 1
+                    )}
                   </div>
 
-                  <p className="text-sm font-semibold text-slate-700 mt-2">
+                  <p
+                    className={`text-sm font-semibold mt-2 ${
+                      completed
+                        ? 'text-slate-700'
+                        : 'text-slate-400'
+                    }`}
+                  >
                     {step}
                   </p>
 
                 </div>
               )
-            )}
+            })}
 
           </div>
 
@@ -255,30 +670,45 @@ function PatientDashboard({
         <div className="grid md:grid-cols-3 gap-4 mt-6">
 
           <div className="bg-white rounded-2xl p-5 border border-sky-100">
-            <HeartPulse className="text-sky-600 mb-3" size={25} />
+            <HeartPulse
+              className="text-sky-600 mb-3"
+              size={25}
+            />
+
             <h3 className="font-bold text-slate-800">
               Connected Care
             </h3>
+
             <p className="text-sm text-slate-500 mt-1">
               Keep your healthcare information connected across services.
             </p>
           </div>
 
           <div className="bg-white rounded-2xl p-5 border border-emerald-100">
-            <ShieldCheck className="text-emerald-600 mb-3" size={25} />
+            <ShieldCheck
+              className="text-emerald-600 mb-3"
+              size={25}
+            />
+
             <h3 className="font-bold text-slate-800">
               Secure Support
             </h3>
+
             <p className="text-sm text-slate-500 mt-1">
               Your healthcare information is designed for secure access.
             </p>
           </div>
 
           <div className="bg-white rounded-2xl p-5 border border-purple-100">
-            <Mic className="text-purple-600 mb-3" size={25} />
+            <Mic
+              className="text-purple-600 mb-3"
+              size={25}
+            />
+
             <h3 className="font-bold text-slate-800">
               Language Support
             </h3>
+
             <p className="text-sm text-slate-500 mt-1">
               Access healthcare support using voice and local language.
             </p>
