@@ -11,6 +11,7 @@ import {
   ClipboardCheck,
   Bell,
   Mic,
+  MessageCircle,
   WifiOff,
   User,
   HeartPulse,
@@ -42,6 +43,7 @@ function PatientDashboard({
   onFollowUps,
   onNotifications,
   onVoice,
+  onAI,
   onOffline,
   onProfile,
   onEmergency,
@@ -320,6 +322,7 @@ function PatientDashboard({
       Mic,
       onVoice
     ],
+    ['AI Health Assistant', 'Chat with CareMitra AI', MessageCircle, onAI],
     [
       'Offline Mode',
       'Access saved information offline',
