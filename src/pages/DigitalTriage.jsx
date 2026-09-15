@@ -22,6 +22,7 @@ function DigitalTriage({ onBack }) {
   const [result, setResult] = useState(null)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [aiLoading, setAiLoading] = useState(false)
 
   const symptoms = [
     'Fever',
@@ -180,18 +181,42 @@ function DigitalTriage({ onBack }) {
   }
 
   const checkSymptoms = async () => {
-    if (selectedSymptoms.length === 0) {
-      alert('Please select at least one symptom')
-      return
+  if (selectedSymptoms.length === 0) {
+    alert('Please select at least one symptom')
+    return
+  }
+
+  setAiLoading(true)
+  setResult(null)
+
+  try {
+    const response = await fetch(
+      'http://localhost:5000/api/triage',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          symptoms: selectedSymptoms
+        })
+      }
+    )
+
+    const data = await response.json()
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Triage failed')
     }
 
-    const triageResult =
-      getTriageResult(selectedSymptoms)
-
-    setResult(triageResult)
-
-    await saveTriageToFirebase(triageResult)
+    setResult(data.urgency)
+  } catch (error) {
+    console.error('TRIAGE ERROR:', error)
+    alert('Unable to connect to CareMitra AI. Please try again.')
+  } finally {
+    setAiLoading(false)
   }
+ }
 
   const resetTriage = () => {
     setSelectedSymptoms([])

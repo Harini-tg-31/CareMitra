@@ -169,10 +169,46 @@ function HealthcareSearch({ onBack }) {
             </p>
           </div>
 
-          <div className="hidden sm:flex items-center gap-2 text-sm text-blue-600">
-            <MapPin size={18} />
-            Nearby
-          </div>
+          <button
+  onClick={() => {
+    if (!navigator.geolocation) {
+      alert('Location is not supported by this browser.')
+      return
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords
+
+        let place = 'healthcare facilities'
+
+        if (category === 'Doctor') {
+          place = 'doctors'
+        } else if (category === 'Hospital') {
+          place = 'hospitals'
+        } else if (category === 'PHC') {
+          place = 'Primary Health Centres'
+        } else if (category === 'Diagnostics') {
+          place = 'diagnostic centres'
+        }
+
+        window.open(
+          `https://www.google.com/maps/search/${encodeURIComponent(
+            place
+          )}/@${latitude},${longitude},14z`,
+          '_blank'
+        )
+      },
+      () => {
+        alert('Please allow location access.')
+      }
+    )
+  }}
+  className="flex items-center gap-2 text-sm text-blue-600 font-semibold hover:text-blue-800"
+>
+  <MapPin size={18} />
+  Nearby
+</button>
 
         </div>
 

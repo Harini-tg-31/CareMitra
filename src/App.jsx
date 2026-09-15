@@ -36,6 +36,7 @@ import WorkerHealthSummary from './pages/WorkerHealthSummary'
 import HealthWorkerAppointments from './pages/HealthWorkerAppointments'
 import DoctorDashboard from './pages/DoctorDashboard'
 import GovernmentAdminDashboard from './pages/GovernmentAdminDashboard'
+import AIHealthAssistant from './pages/AIHealthAssistant'
 
 function App() {
   const [loggedIn, setLoggedIn] = useState(false)
@@ -101,6 +102,7 @@ function App() {
           onFollowUps={() => setPage('followups')}
           onNotifications={() => setPage('notifications')}
           onVoice={() => setPage('voice')}
+          onAI={() => setPage('ai-assistant')}
           onOffline={() => setPage('offline')}
           onProfile={() => setPage('profile')}
           onEmergency={() => setPage('emergency')}
@@ -198,6 +200,13 @@ function App() {
         />
       )
     }
+    if (page === 'ai-assistant') {
+  return (
+    <AIHealthAssistant
+      onBack={() => setPage('dashboard')}
+    />
+  )
+}
 
     if (page === 'offline') {
       return (
